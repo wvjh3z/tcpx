@@ -3082,6 +3082,7 @@ start_menu() {
 ————————————————————————————————————————————————————————————————"
 	echo ""
 	read -p " 请输入数字: " num
+	num=$(echo "$num" | tr -d '[:space:]')
 	case "$num" in
 	1) install_xanmod_auto ;;
 	2) enable_acceleration "fq" "bbr" ;;
