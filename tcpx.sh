@@ -2694,6 +2694,10 @@ if [[ $# -gt 0 ]]; then
 		enable_acceleration "fq" "bbr"
 		exit 0
 		;;
+	log)
+		clean_logs_and_schedule
+		exit 0
+		;;
 	*)
 		echo -e "${ERROR} 未知选项: \"$1\"，使用 --help 查看帮助"
 		exit 1
