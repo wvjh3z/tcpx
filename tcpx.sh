@@ -21,9 +21,6 @@ export PATH
 # 异常处理: 管道失败时传播错误码
 set -o pipefail 2>/dev/null || true
 
-# 全局错误计数器
-_ERROR_COUNT=0
-
 # =================================================
 #  全局配置区 (Configuration as Data)
 # =================================================
@@ -45,9 +42,6 @@ OS_VERSION_ID=""
 OS_VERSION_CODENAME=""
 OS_ARCH=""
 
-# GitHub API 响应缓存 (避免同一仓库重复请求)
-declare -A _GITHUB_API_CACHE
-
 # =================================================
 #  通用工具函数
 # =================================================
@@ -64,21 +58,6 @@ _log() {
 	local msg="$*"
 	local logfile="/var/log/tcpx.log"
 	echo "[$(date '+%Y-%m-%d %H:%M:%S')] [${level}] ${msg}" >>"$logfile" 2>/dev/null
-}
-
-# 网络连通性检查
-_check_network() {
-	local test_urls=("https://www.google.com" "https://www.baidu.com" "https://1.1.1.1")
-	for url in "${test_urls[@]}"; do
-		if curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null | grep -q "^[23]"; then
-			return 0
-		fi
-	done
-	echo -e "${ERROR} 网络连接异常！请检查:"
-	echo -e "  1. DNS 是否正常: ping -c 1 8.8.8.8"
-	echo -e "  2. 是否有防火墙阻断出站流量"
-	echo -e "  3. 是否需要配置代理"
-	return 1
 }
 
 # 磁盘空间检查 (内核安装需要至少 500MB)
@@ -111,39 +90,6 @@ _safe_sysctl_apply() {
 		done
 	fi
 	sysctl --system >/dev/null 2>&1
-}
-
-# dpkg 安装包并处理错误
-_safe_dpkg_install() {
-	local deb_file="$1"
-	local pkg_desc="${2:-包}"
-
-	if [[ ! -f "$deb_file" ]]; then
-		echo -e "${ERROR} 文件不存在: $deb_file"
-		return 1
-	fi
-
-	# 检查 deb 文件完整性
-	if ! dpkg-deb --info "$deb_file" >/dev/null 2>&1; then
-		echo -e "${ERROR} ${pkg_desc} 文件损坏或不是有效的 deb 包: $deb_file"
-		echo -e "${TIP} 可能是下载不完整，请重试。"
-		return 1
-	fi
-
-	echo -e "${INFO} 正在安装 ${pkg_desc}..."
-	if ! dpkg -i "$deb_file" 2>&1; then
-		echo -e "${TIP} dpkg 安装出现依赖问题，正在尝试修复..."
-		if ! apt-get install -f -y 2>&1; then
-			echo -e "${ERROR} 依赖修复失败！可能原因:"
-			echo -e "  1. 内核版本与当前系统不兼容"
-			echo -e "  2. 缺少必要的依赖包"
-			echo -e "  3. 磁盘空间不足"
-			return 1
-		fi
-		# 修复后重试安装
-		dpkg -i "$deb_file" 2>/dev/null
-	fi
-	return 0
 }
 
 # 检查当前用户是否为 root
@@ -304,202 +250,7 @@ safe_wget() {
 	return 1
 }
 
-# GitHub 资源获取函数 (带缓存，避免同一仓库重复请求 API)
-get_github_asset() {
-	local repo="$1"
-	local tag_kw="$2"
-	local ast_kw="$3"
-	local arch_kw="$4"
-	local api_url="https://api.github.com/repos/${repo}/releases"
-
-	# 检查缓存
-	local cache_key="${repo}"
-	local response=""
-	if [[ -n "${_GITHUB_API_CACHE[$cache_key]+x}" ]]; then
-		response="${_GITHUB_API_CACHE[$cache_key]}"
-	else
-		response=$(curl -sL --max-time 15 "$api_url" 2>/dev/null)
-		if [[ -z "$response" ]]; then
-			echo -e "${ERROR} 无法连接 GitHub API (${repo})！" >&2
-			echo -e "${TIP} 请检查网络连接，或稍后重试。" >&2
-			echo -e "${TIP} 如在中国大陆，可能需要配置代理。" >&2
-			_log "ERROR" "GitHub API unreachable: ${repo}"
-			return 1
-		fi
-		if echo "$response" | grep -q "API rate limit exceeded"; then
-			echo -e "${ERROR} 触发 GitHub API 频率限制！" >&2
-			echo -e "${TIP} 当前 IP 请求过多，请等待 1 小时后重试。" >&2
-			echo -e "${TIP} 或使用不同 IP / 配置 GitHub Token。" >&2
-			_log "ERROR" "GitHub API rate limited: ${repo}"
-			return 1
-		fi
-		if echo "$response" | grep -q '"message".*"Not Found"'; then
-			echo -e "${ERROR} GitHub 仓库不存在: ${repo}" >&2
-			_log "ERROR" "GitHub repo not found: ${repo}"
-			return 1
-		fi
-		# 写入缓存
-		_GITHUB_API_CACHE[$cache_key]="$response"
-	fi
-
-	# 提取所有下载直链
-	local all_urls
-	all_urls=$(echo "$response" | jq -r '.[].assets[]?.browser_download_url' 2>/dev/null)
-	if [[ -z "$all_urls" ]]; then
-		echo -e "${ERROR} 无法从 ${repo} 获取资源列表！" >&2
-		echo -e "${TIP} 可能原因: jq 解析失败或仓库无 release 资源。" >&2
-		_log "ERROR" "No assets found in ${repo}"
-		return 1
-	fi
-
-	# 层层过滤
-	local result
-	result=$(echo "$all_urls" | grep -iE "$tag_kw" | grep -iE "$ast_kw")
-	[[ -n "$arch_kw" ]] && result=$(echo "$result" | grep -iE "$arch_kw")
-
-	# 防呆：x86_64 架构排除 arm64 结果
-	if [[ "$arch_kw" != *"arm64"* && "$tag_kw" != *"arm64"* && "$OS_ARCH" != "aarch64" ]]; then
-		result=$(echo "$result" | grep -viE "arm64|aarch64")
-	fi
-
-	local asset_url
-	asset_url=$(echo "$result" | head -n 1)
-
-	if [[ -z "$asset_url" ]]; then
-		echo -e "${ERROR} 在 ${repo} 中未找到匹配的文件！" >&2
-		echo -e "${TIP} 过滤条件: tag='${tag_kw}' file='${ast_kw}' arch='${arch_kw}'" >&2
-		echo -e "${TIP} 可能是上游更改了文件命名规则或删除了该版本。" >&2
-		_log "ERROR" "Asset not found: ${repo} tag=${tag_kw} file=${ast_kw} arch=${arch_kw}"
-		return 1
-	fi
-
-	echo "$asset_url"
-}
-
 # =================================================
-#  内核安装核心引擎
-# =================================================
-
-remove_old_headers() {
-	echo -e "${INFO} 正在清理旧的内核 Headers 防止冲突..."
-	local current_ker
-	current_ker=$(uname -r)
-	dpkg -l | grep 'linux-headers' | awk '{print $2}' | grep -v "$current_ker" | xargs -r apt-get purge -y >/dev/null 2>&1
-	apt-get autoremove -y >/dev/null 2>&1
-}
-
-# 自动清理旧内核 (保留当前运行的内核，删除其他旧内核)
-_auto_remove_old_kernels() {
-	local current_ker
-	current_ker=$(uname -r)
-
-	# 找出所有已安装的内核包 (排除当前运行的)
-	local old_kernels
-	old_kernels=$(dpkg-query -W -f='${Package}\n' 2>/dev/null | grep -E "^linux-(image|headers|modules)-[0-9]" | grep -v "$current_ker" | grep -v "xanmod")
-
-	# 如果刚装了 xanmod，也排除 xanmod 包 (还没重启，不能删)
-	# 只删除非 xanmod 的旧内核
-	if [[ -z "$old_kernels" ]]; then
-		echo -e "${INFO} 没有需要清理的旧内核。"
-		return 0
-	fi
-
-	local count
-	count=$(echo "$old_kernels" | wc -l)
-	echo -e "${INFO} 发现 ${count} 个旧内核包，正在清理..."
-
-	echo "$old_kernels" | xargs -r apt-get purge -y >/dev/null 2>&1
-	apt-get autoremove -y >/dev/null 2>&1
-
-	echo -e "${INFO} 旧内核清理完成，已释放磁盘空间。"
-}
-
-# 通用内核安装函数
-install_kernel_generic() {
-	local kernel_desc="$1"
-	local head_url="$2"
-	local img_url="$3"
-
-	echo -e "${INFO} ================================================"
-	echo -e "${INFO} 开始安装: ${kernel_desc} 内核"
-	echo -e "${INFO} ================================================"
-
-	if [[ -z "$img_url" ]]; then
-		echo -e "${ERROR} 传入的镜像文件下载链接为空！"
-		echo -e "${TIP} 可能原因:"
-		echo -e "  1. GitHub API 解析失败 (网络问题或频率限制)"
-		echo -e "  2. 上游仓库已移除该文件"
-		echo -e "  3. 关键词匹配规则变更"
-		_log "ERROR" "install_kernel_generic: img_url empty for ${kernel_desc}"
-		return 1
-	fi
-
-	# 磁盘空间检查
-	if ! _check_disk_space 500; then
-		return 1
-	fi
-
-	remove_old_headers
-
-	# 创建独立的工作目录 (带空变量保护)
-	local work_dir="/tmp/kernel_install_$(date +%s)_$$"
-	mkdir -p "$work_dir" || { echo -e "${ERROR} 无法创建工作目录 $work_dir"; return 1; }
-	cd "$work_dir" || { echo -e "${ERROR} 无法进入工作目录 $work_dir"; return 1; }
-
-	local head_file="linux-headers.deb"
-	local img_file="linux-image.deb"
-
-	# 下载 headers (可选)
-	if [[ -n "$head_url" ]]; then
-		if ! safe_wget "$head_url" "$head_file"; then
-			echo -e "${TIP} Headers 下载失败，将跳过 Headers 安装 (内核仍可正常使用)"
-			head_url=""
-		fi
-	fi
-
-	# 下载 image (必须)
-	if ! safe_wget "$img_url" "$img_file"; then
-		echo -e "${ERROR} 内核镜像下载失败，安装中止。"
-		cd /tmp && [[ -n "$work_dir" ]] && rm -rf "$work_dir"
-		return 1
-	fi
-
-	# 安装内核镜像
-	echo -e "${INFO} 正在安装内核镜像..."
-	if ! _safe_dpkg_install "$img_file" "内核镜像"; then
-		echo -e "${ERROR} 内核镜像安装失败！"
-		cd /tmp && [[ -n "$work_dir" ]] && rm -rf "$work_dir"
-		return 1
-	fi
-
-	# 安装 headers (可选，失败不中止)
-	if [[ -n "$head_url" && -f "$head_file" ]]; then
-		echo -e "${INFO} 正在安装内核 Headers..."
-		if ! _safe_dpkg_install "$head_file" "内核 Headers"; then
-			echo -e "${TIP} Headers 安装失败，但内核镜像已安装成功。"
-			echo -e "${TIP} Headers 主要用于编译内核模块 (如 DKMS)，不影响内核启动。"
-		fi
-	fi
-
-	# 清理工作目录
-	cd /tmp && [[ -n "$work_dir" ]] && rm -rf "$work_dir"
-
-	echo -e "${INFO} ${kernel_desc} 内核包安装完成，正在更新系统引导..."
-	BBR_grub
-
-	# 自动清理旧内核 (保留当前运行的和刚安装的)
-	echo -e "${INFO} 正在清理旧内核，释放磁盘空间..."
-	_auto_remove_old_kernels
-
-	echo -e "${INFO} ================================================"
-	echo -e "${INFO} ${kernel_desc} 安装完成！"
-	echo -e "${INFO} ================================================"
-	echo -e "${TIP} 请重启服务器使新内核生效: reboot"
-	echo -e "${TIP} 重启后验证: uname -r"
-	_log "INFO" "Kernel installed: ${kernel_desc}"
-}
-
-
 # =================================================
 #  系统级网络与资源自适应优化 (智能模式)
 # =================================================
@@ -2496,6 +2247,11 @@ install_xanmod_generic() {
 	# Secure Boot 检测
 	_check_secure_boot || return 0
 
+	# 磁盘空间检查
+	if ! _check_disk_space 500; then
+		return 1
+	fi
+
 	echo -e "${INFO} ================================================"
 	echo -e "${INFO} 开始安装 XanMod 内核 [${edition^^}] 分支"
 	echo -e "${INFO} ================================================"
@@ -2622,8 +2378,6 @@ install_xanmod_generic() {
 	echo -e "${INFO} 如需回退到原内核，可在 GRUB 高级选项中选择旧内核启动。"
 }
 
-check_sys_official_xanmod_main() { install_xanmod_generic "main"; }
-check_sys_official_xanmod_lts() { install_xanmod_generic "lts"; }
 
 # 自动选择 XanMod 分支安装
 install_xanmod_auto() {
