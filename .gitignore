@@ -1,0 +1,6 @@
+*.orig
+*.bak
+*.swp
+*.swo
+*~
+ssh/
