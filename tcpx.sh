@@ -536,12 +536,20 @@ _apply_apt_mirror() {
 		local security_suite="${codename}-security"
 		[[ "${OS_VERSION_ID}" == "10" ]] && security_suite="${codename}/updates"
 
-		# security 源: 优先使用选中的镜像，不可用时回退官方
+		# security 源: 优先镜像，不可用时尝试官方，都不行则跳过
 		local security_mirror="${mirror_url}"
+		local security_line=""
 		local sec_test_url="https://${mirror_url}/debian-security/dists/${security_suite}/Release"
-		if ! curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$sec_test_url" 2>/dev/null | grep -q "200"; then
-			security_mirror="deb.debian.org"
-			echo -e "${TIP} 镜像无 debian-security，security 源使用官方: deb.debian.org"
+		if curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$sec_test_url" 2>/dev/null | grep -q "200"; then
+			security_line="deb https://${security_mirror}/debian-security/ ${security_suite} ${components}"
+		else
+			local official_sec="https://deb.debian.org/debian-security/dists/${security_suite}/Release"
+			if curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$official_sec" 2>/dev/null | grep -q "200"; then
+				security_line="deb https://deb.debian.org/debian-security/ ${security_suite} ${components}"
+				echo -e "${TIP} 镜像无 debian-security，使用官方源。"
+			else
+				echo -e "${TIP} security 源均不可达，暂时跳过。"
+			fi
 		fi
 
 		# 生成 sources.list
@@ -549,7 +557,7 @@ _apply_apt_mirror() {
 # Debian ${codename} - Mirror: ${mirror_url}
 deb https://${mirror_url}/debian/ ${codename} ${components}
 deb https://${mirror_url}/debian/ ${codename}-updates ${components}
-deb https://${security_mirror}/debian-security/ ${security_suite} ${components}
+${security_line}
 EOF
 
 		# backports 仅对当前支持的版本添加 (EOL 版本的 backports 已被移除)
@@ -1409,12 +1417,14 @@ upgrade_system_version() {
 
 	if [[ "$OS_ID" == "debian" ]]; then
 		# Debian 升级流程
-		echo -e "${INFO} [1/4] 更新当前系统到最新状态..."
+		echo -e "${INFO} [1/5] 更新当前系统并安装目标版本密钥..."
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update && apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 		apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+		# 安装目标版本的 archive keyring (解决跨版本签名信任问题)
+		apt-get install -y debian-archive-keyring 2>/dev/null
 
-		echo -e "${INFO} [2/4] 写入新版本源 (${target_codename} @ ${mirror_url})..."
+		echo -e "${INFO} [2/5] 写入新版本源 (${target_codename} @ ${mirror_url})..."
 		local sources_file="/etc/apt/sources.list"
 		cp "$sources_file" "${sources_file}.bak.before-upgrade.$(date +%Y%m%d%H%M%S)"
 
@@ -1427,36 +1437,52 @@ upgrade_system_version() {
 		local security_suite="${target_codename}-security"
 		[[ "$target_codename" == "buster" ]] && security_suite="buster/updates"
 
-		# security 源: 优先镜像，不可用时回退官方
+		# security 源: 优先镜像，不可用时尝试官方，都不行则跳过 (升级不强依赖 security)
 		local security_mirror="${mirror_url}"
+		local security_line=""
 		local sec_test_url="https://${mirror_url}/debian-security/dists/${security_suite}/Release"
-		if ! curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$sec_test_url" 2>/dev/null | grep -q "200"; then
-			security_mirror="deb.debian.org"
-			echo -e "${TIP} 镜像无 debian-security，security 源使用官方: deb.debian.org"
+		if curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$sec_test_url" 2>/dev/null | grep -q "200"; then
+			security_line="deb https://${security_mirror}/debian-security/ ${security_suite} ${components}"
+		else
+			# 尝试官方
+			local official_sec="https://deb.debian.org/debian-security/dists/${security_suite}/Release"
+			if curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$official_sec" 2>/dev/null | grep -q "200"; then
+				security_line="deb https://deb.debian.org/debian-security/ ${security_suite} ${components}"
+				echo -e "${TIP} 镜像无 debian-security，使用官方源。"
+			else
+				echo -e "${TIP} security 源均不可达，升级时暂时跳过 (升级后可手动添加)。"
+			fi
 		fi
 
 		cat >"$sources_file" <<EOF
 # Debian ${target_codename} - 升级源 (${mirror_url})
 deb https://${mirror_url}/debian/ ${target_codename} ${components}
 deb https://${mirror_url}/debian/ ${target_codename}-updates ${components}
-deb https://${security_mirror}/debian-security/ ${security_suite} ${components}
+${security_line}
 EOF
 
 		# 清理 sources.list.d 中的旧版本源 (避免冲突)
 		find /etc/apt/sources.list.d/ -name "*.list" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
 		find /etc/apt/sources.list.d/ -name "*.sources" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
 
-		echo -e "${INFO} [3/4] 更新包索引..."
-		apt-get update 2>&1 | tail -5
-		# 检查核心包索引是否存在 (即使 apt-get update 有 warning 也继续)
-		if ! apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}"; then
+		echo -e "${INFO} [3/5] 更新包索引..."
+		apt-get update --allow-releaseinfo-change 2>&1 | tail -5
+		# 验证: 检查目标版本的包是否可用
+		local update_ok=0
+		if apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}\|${target_version}"; then
+			update_ok=1
+		elif apt-cache showpkg base-files 2>/dev/null | grep -q "${target_codename}"; then
+			update_ok=1
+		fi
+		if [[ $update_ok -eq 0 ]]; then
 			echo -e "${ERROR} 目标版本 (${target_codename}) 的包索引获取失败！"
-			echo -e "${TIP} 源文件: cat /etc/apt/sources.list"
+			echo -e "${TIP} 可能原因: 网络不通或 GPG 签名验证失败"
+			echo -e "${TIP} 尝试手动: apt-get update --allow-insecure-repositories"
 			return 1
 		fi
 		echo -e "${INFO} 包索引更新成功。"
 
-		echo -e "${INFO} [4/4] 执行系统升级 (这可能需要 5-30 分钟)..."
+		echo -e "${INFO} [4/5] 执行系统升级 (这可能需要 5-30 分钟)..."
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get -y \
 			-o Dpkg::Options::="--force-confdef" \
@@ -1471,7 +1497,8 @@ EOF
 			echo -e "${TIP} 可尝试: apt-get install -f -y && apt-get dist-upgrade -y"
 		fi
 
-		# 强制更新 base-files (确保 /etc/os-release 更新，但不影响 SSH 等服务配置)
+		# [5/5] 强制更新 base-files (确保 /etc/os-release 更新)
+		echo -e "${INFO} [5/5] 更新系统版本标识..."
 		DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confnew" base-files 2>/dev/null
 
 		apt-get autoremove -y 2>/dev/null
@@ -1487,6 +1514,11 @@ EOF
 		local sources_file="/etc/apt/sources.list"
 		cp "$sources_file" "${sources_file}.bak.before-upgrade.$(date +%Y%m%d%H%M%S)"
 
+		# Ubuntu 24.04+ 使用 DEB822 格式，需要禁用
+		if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+			mv /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.disabled
+		fi
+
 		cat >"$sources_file" <<EOF
 # Ubuntu ${target_codename} - 升级源 (${mirror_url})
 deb https://${mirror_url}/ubuntu/ ${target_codename} main restricted universe multiverse
@@ -1499,8 +1531,8 @@ EOF
 		find /etc/apt/sources.list.d/ -name "*.sources" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
 
 		echo -e "${INFO} [3/4] 更新包索引..."
-		apt-get update 2>&1 | tail -5
-		if ! apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}"; then
+		apt-get update --allow-releaseinfo-change 2>&1 | tail -5
+		if ! apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}\|${target_version}"; then
 			echo -e "${ERROR} 目标版本 (${target_codename}) 的包索引获取失败！"
 			return 1
 		fi
