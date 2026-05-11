@@ -3,6 +3,12 @@
 ## v1.2
 
 ### 新增
+- **菜单 [13] 设置 IPv4 优先** — 独立菜单设置 IPv4 优先出站
+  - 写入 `/etc/gai.conf` precedence 规则
+  - 自动检测当前状态（已设置时提示是否重新写入）
+  - getent 验证是否生效
+  - 支持 CLI: `ipv4prio`
+  - 兼容所有 6 个系统（Debian 11/12/13, Ubuntu 20.04/22.04/24.04）
 - **菜单 [11] WARP IPv6** — 通过 Cloudflare WARP WireGuard 隧道添加 IPv6
   - 支持 Debian 11/12/13, Ubuntu 20.04/22.04/24.04
   - wgcf 从 GitHub releases 直接下载（不依赖失效的 git.io）

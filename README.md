@@ -26,7 +26,8 @@ curl -fsSL https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh | bash -s 
 ———————————————— 系统 ————————————————
  8. 安装基础系统包               9. 系统大版本升级
 10. 清理日志+定时任务           11. 安装WARP IPv6
-12. 添加虚拟内存(Swap)           0. 退出脚本
+12. 添加虚拟内存(Swap)          13. 设置IPv4优先
+ 0. 退出脚本
 ```
 
 ## 推荐流程
@@ -50,6 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh | bash -s 
 | 10 | `log` | 清理日志+定时任务 |
 | 11 | `warp6` | 安装 WARP IPv6 |
 | 12 | `swap` | 添加虚拟内存 |
+| 13 | `ipv4prio` | 设置 IPv4 优先 |
 
 ## 系统支持
 
@@ -82,3 +84,6 @@ curl -fsSL https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh | bash -s 
 
 ### 系统升级 (菜单9)
 自动检测当前版本逐级升级：Debian 11→12→13，Ubuntu 20→22→24
+
+### 设置 IPv4 优先 (菜单13)
+写入 `/etc/gai.conf` 的 precedence 规则，让系统在双栈（IPv4+IPv6）环境下优先使用 IPv4 出站。适用于安装 WARP IPv6 后不希望默认走 IPv6 的场景。

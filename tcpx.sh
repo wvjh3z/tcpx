@@ -1916,6 +1916,80 @@ setup_swap() {
 }
 
 # =================================================
+#  设置 IPv4 优先
+# =================================================
+set_ipv4_priority() {
+	echo -e "${INFO} ================================================"
+	echo -e "${INFO} 设置 IPv4 优先出站"
+	echo -e "${INFO} ================================================"
+	echo -e ""
+
+	# 检查当前状态
+	local current_status="未设置"
+	if [[ -f /etc/gai.conf ]] && grep -q "^precedence.*::ffff:0:0/96" /etc/gai.conf 2>/dev/null; then
+		current_status="已设置"
+		echo -e "${INFO} 当前状态: ${GREEN_FONT_PREFIX}IPv4 优先已生效${FONT_COLOR_SUFFIX}"
+		echo -e ""
+		echo -e "  当前 /etc/gai.conf 中的配置:"
+		grep "^precedence" /etc/gai.conf | while read -r line; do
+			echo -e "    $line"
+		done
+		echo -e ""
+		if _is_interactive; then
+			read -p "是否重新写入配置？[Y/n]: " confirm
+			confirm=${confirm:-Y}
+			if [[ "$confirm" =~ ^[Nn]$ ]]; then
+				echo -e "${INFO} 操作已取消。"
+				return 0
+			fi
+		fi
+	fi
+
+	# 写入 /etc/gai.conf
+	# 先清除旧的 precedence 行 (避免重复)
+	if [[ -f /etc/gai.conf ]]; then
+		sed -i '/^precedence.*::ffff:0:0/d' /etc/gai.conf
+	else
+		touch /etc/gai.conf
+	fi
+
+	echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf
+
+	echo -e "${INFO} 已写入 /etc/gai.conf:"
+	echo -e "    precedence ::ffff:0:0/96  100"
+	echo -e ""
+
+	# 验证
+	echo -e "${INFO} 正在验证 IPv4 优先是否生效..."
+	local test_result=""
+	if command -v getent >/dev/null 2>&1; then
+		test_result=$(getent ahosts www.google.com 2>/dev/null | head -1 || echo "")
+	fi
+
+	if [[ -n "$test_result" ]]; then
+		local first_addr
+		first_addr=$(echo "$test_result" | awk '{print $1}')
+		if [[ "$first_addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+			echo -e "${INFO} 验证通过: 系统优先解析 IPv4 地址 (${first_addr})"
+		elif [[ "$first_addr" =~ : ]]; then
+			echo -e "${TIP} 系统仍优先解析 IPv6 地址 (${first_addr})"
+			echo -e "${TIP} 可能需要重启网络服务或重新登录 SSH 才能完全生效。"
+		fi
+	else
+		echo -e "${TIP} 无法验证 (getent 不可用或网络不通)，配置已写入，重新登录后生效。"
+	fi
+
+	echo -e ""
+	echo -e "${INFO} ================================================"
+	echo -e "${INFO} IPv4 优先设置完成！"
+	echo -e "${INFO} ================================================"
+	echo -e "${TIP} 原理: /etc/gai.conf 的 precedence 规则让系统在双栈环境下优先使用 IPv4 出站。"
+	echo -e "${TIP} 恢复默认: 删除 /etc/gai.conf 中的 precedence 行即可恢复 IPv6 优先。"
+
+	_log "INFO" "IPv4 priority set via /etc/gai.conf"
+}
+
+# =================================================
 #  基础系统包安装与初始化
 # =================================================
 install_base_packages() {
@@ -2895,7 +2969,8 @@ start_menu() {
  ———————————————————————————— 系统 —————————————————————————————
  ${GREEN_FONT_PREFIX}8.${FONT_COLOR_SUFFIX} 安装基础系统包              ${GREEN_FONT_PREFIX}9.${FONT_COLOR_SUFFIX} 系统大版本升级
  ${GREEN_FONT_PREFIX}10.${FONT_COLOR_SUFFIX} 清理日志+定时任务          ${GREEN_FONT_PREFIX}11.${FONT_COLOR_SUFFIX} 安装WARP IPv6
- ${GREEN_FONT_PREFIX}12.${FONT_COLOR_SUFFIX} 添加虚拟内存(Swap)         ${GREEN_FONT_PREFIX}0.${FONT_COLOR_SUFFIX} 退出脚本
+ ${GREEN_FONT_PREFIX}12.${FONT_COLOR_SUFFIX} 添加虚拟内存(Swap)         ${GREEN_FONT_PREFIX}13.${FONT_COLOR_SUFFIX} 设置IPv4优先
+ ${GREEN_FONT_PREFIX}0.${FONT_COLOR_SUFFIX} 退出脚本
 ————————————————————————————————————————————————————————————————"
 	echo ""
 	read -p " 请输入数字: " num
@@ -2912,6 +2987,7 @@ start_menu() {
 	10) clean_logs_and_schedule ;;
 	11) install_warp_ipv6 ;;
 	12) setup_swap ;;
+	13) set_ipv4_priority ;;
 	0) exit 0 ;;
 	*)
 		echo -e "${ERROR}: 请输入正确数字"
@@ -2931,10 +3007,18 @@ show_help() {
 	echo ""
 	echo "选项:"
 	echo "  --help, -h     显示此帮助信息"
+	echo "  xanmod         安装 XanMod 内核"
+	echo "  bbr            启用 BBR+FQ"
 	echo "  op0            智能网络优化 (自动适配 CN/海外)"
 	echo "  op5            中国大陆换源"
 	echo "  op6            海外服务器换源"
 	echo "  op7            腾讯云 NFT 转发优化"
+	echo "  op8            安装基础系统包"
+	echo "  op9            系统大版本升级"
+	echo "  log            清理日志+定时任务"
+	echo "  warp6          安装 WARP IPv6"
+	echo "  swap           添加虚拟内存"
+	echo "  ipv4prio       设置 IPv4 优先"
 	echo ""
 	echo "推荐流程: 8 → 1 → 4 → 重启"
 	echo "  基础包 → XanMod 内核 → 智能优化 → 重启生效"
@@ -2994,6 +3078,10 @@ if [[ $# -gt 0 ]]; then
 		;;
 	swap)
 		setup_swap
+		exit 0
+		;;
+	ipv4prio)
+		set_ipv4_priority
 		exit 0
 		;;
 	*)
