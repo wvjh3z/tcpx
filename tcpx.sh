@@ -23,7 +23,7 @@ _ERROR_COUNT=0
 # =================================================
 #  全局配置区 (Configuration as Data)
 # =================================================
-readonly SH_VER="1.0"
+readonly SH_VER="1.1"
 readonly GITHUB_RAW_URL="https://raw.githubusercontent.com/ylx2016/Linux-NetSpeed/master"
 readonly GITHUB_API_URL="https://api.github.com/repos/ylx2016/kernel/releases"
 
@@ -1759,82 +1759,82 @@ clean_logs_and_schedule() {
 	echo -e "${INFO} ================================================"
 	echo -e ""
 
-	# 1. 立即清理
-	echo -e "${INFO} [1/2] 立即清理系统日志..."
+	# 1. 创建独立清理脚本
+	echo -e "${INFO} [1/4] 创建日志清理脚本 /root/clean_logs.sh..."
+	cat > /root/clean_logs.sh <<'SCRIPT'
+#!/bin/bash
+# 清理 systemd journald 日志
+command -v journalctl >/dev/null && journalctl --vacuum-time=1s 2>/dev/null
 
-	# journald 日志
-	if command -v journalctl >/dev/null 2>&1; then
-		local before_size
-		before_size=$(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[MGK]' || echo "未知")
-		echo -e "  清理前 journald 占用: ${before_size}"
+# 删除旧的、备份的、压缩的日志文件
+find /var/log -type f -name "*.log" -delete 2>/dev/null
+find /var/log -type f -name "*.gz" -delete 2>/dev/null
+find /var/log -type f -name "*.1" -delete 2>/dev/null
+find /var/log -type f -name "*.old" -delete 2>/dev/null
+find /var/log -type f -name "btmp*" -delete 2>/dev/null
 
-		journalctl --vacuum-size=10M 2>/dev/null
-		journalctl --vacuum-time=3d 2>/dev/null
+# 置空当前正在使用的核心日志文件
+for log in syslog auth.log kern.log dpkg.log btmp; do
+  [ -f "/var/log/$log" ] && truncate -s 0 "/var/log/$log"
+done
 
-		local after_size
-		after_size=$(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[MGK]' || echo "未知")
-		echo -e "  清理后 journald 占用: ${GREEN_FONT_PREFIX}${after_size}${FONT_COLOR_SUFFIX}"
+# 清理临时文件
+find /tmp -type f -atime +3 -delete 2>/dev/null
+SCRIPT
+	chmod +x /root/clean_logs.sh
+	echo -e "${INFO} 清理脚本已创建。"
+
+	# 2. 立即执行一次清理
+	echo -e ""
+	echo -e "${INFO} [2/4] 立即执行日志清理..."
+	/root/clean_logs.sh
+	echo -e "${INFO} 清理完成。"
+
+	# 3. 禁用 journald 磁盘存储
+	echo -e ""
+	echo -e "${INFO} [3/4] 配置 journald 禁止日志堆积..."
+	if [[ -d /etc/systemd ]]; then
+		mkdir -p /etc/systemd/journald.conf.d
+		cat > /etc/systemd/journald.conf.d/disable.conf <<'EOF'
+[Journal]
+Storage=none
+Compress=no
+SystemMaxUse=0
+EOF
+		systemctl restart systemd-journald >/dev/null 2>&1
+		echo -e "${INFO} journald 已设置为不存储日志到磁盘。"
 	fi
 
-	# apt 缓存
-	echo -e "  清理 APT 缓存..."
-	apt-get clean 2>/dev/null
-	apt-get autoclean 2>/dev/null
-
-	# 旧日志文件
-	echo -e "  清理旧日志文件..."
-	find /var/log -name "*.gz" -delete 2>/dev/null
-	find /var/log -name "*.1" -delete 2>/dev/null
-	find /var/log -name "*.old" -delete 2>/dev/null
-	truncate -s 0 /var/log/syslog 2>/dev/null
-	truncate -s 0 /var/log/kern.log 2>/dev/null
-	truncate -s 0 /var/log/auth.log 2>/dev/null
-	truncate -s 0 /var/log/dpkg.log 2>/dev/null
-
-	# 临时文件
-	echo -e "  清理临时文件..."
-	rm -rf /tmp/* 2>/dev/null
-	rm -rf /var/tmp/* 2>/dev/null
-
-	echo -e "${INFO} 立即清理完成！"
+	# 4. 配置 crontab 定时任务 (每天凌晨 3 点)
 	echo -e ""
+	echo -e "${INFO} [4/4] 配置定时清理任务..."
 
-	# 2. 配置定时清理
-	echo -e "${INFO} [2/2] 配置定时清理任务..."
+	# 确保 cron 已安装
+	if ! command -v crontab >/dev/null 2>&1; then
+		echo -e "${INFO} 正在安装 cron..."
+		apt-get install -y cron >/dev/null 2>&1
+		systemctl enable cron 2>/dev/null
+		systemctl start cron 2>/dev/null
+	fi
 
-	# 配置 journald 持久化限制
-	mkdir -p /etc/systemd/journald.conf.d
-	cat >/etc/systemd/journald.conf.d/99-size-limit.conf <<EOF
-[Journal]
-SystemMaxUse=50M
-SystemMaxFileSize=10M
-MaxRetentionSec=3day
-EOF
-	systemctl restart systemd-journald 2>/dev/null
-	echo -e "  journald 限制: 最大 50MB / 保留 3 天"
+	# 清理旧的相关条目，避免重复
+	(crontab -l 2>/dev/null | grep -vE "journalctl|vacuum-time|/var/log|clean_logs.sh"; echo "0 3 * * * /root/clean_logs.sh") | crontab -
+	echo -e "${INFO} 定时任务已配置: 每天 03:00 自动清理"
 
-	# 创建 cron 定时任务 (每天凌晨 3 点清理)
-	cat >/etc/cron.daily/clean-logs <<'EOF'
-#!/bin/bash
-# 每日自动清理日志 - by tcpx.sh
-journalctl --vacuum-size=10M --vacuum-time=3d 2>/dev/null
-apt-get clean 2>/dev/null
-find /var/log -name "*.gz" -delete 2>/dev/null
-find /var/log -name "*.1" -delete 2>/dev/null
-find /var/log -name "*.old" -delete 2>/dev/null
-find /tmp -type f -atime +3 -delete 2>/dev/null
-EOF
-	chmod +x /etc/cron.daily/clean-logs
-	echo -e "  定时任务: 每天自动清理 (cron.daily)"
+	# 同时清理 APT 缓存
+	apt-get clean 2>/dev/null
 
 	echo -e ""
 	echo -e "${INFO} ================================================"
-	echo -e "${INFO} 日志清理完成！"
+	echo -e "${INFO} 日志清理方案配置完成！"
 	echo -e "${INFO} ================================================"
 	echo -e "${INFO} 已配置:"
-	echo -e "  • journald 限制 50MB / 保留 3 天"
-	echo -e "  • 每天自动清理旧日志和临时文件"
-	echo -e "  • APT 缓存自动清理"
+	echo -e "  • journald 存储已禁用 (不再写入磁盘)"
+	echo -e "  • 每天 03:00 自动执行 /root/clean_logs.sh"
+	echo -e "  • APT 缓存已清理"
+	echo -e ""
+	echo -e "${INFO} 当前定时任务:"
+	crontab -l 2>/dev/null | grep -v "^#"
 	_log "INFO" "Logs cleaned and cron scheduled"
 }
 
@@ -2607,7 +2607,7 @@ start_menu() {
  ${GREEN_FONT_PREFIX}6.${FONT_COLOR_SUFFIX} 海外服务器换源(测速)        ${GREEN_FONT_PREFIX}7.${FONT_COLOR_SUFFIX} 腾讯云NFT转发优化
  ———————————————————————————— 系统 —————————————————————————————
  ${GREEN_FONT_PREFIX}8.${FONT_COLOR_SUFFIX} 安装基础系统包              ${GREEN_FONT_PREFIX}9.${FONT_COLOR_SUFFIX} 系统大版本升级
- ${GREEN_FONT_PREFIX}l.${FONT_COLOR_SUFFIX} 清理日志+定时任务           ${GREEN_FONT_PREFIX}0.${FONT_COLOR_SUFFIX} 退出脚本
+ ${GREEN_FONT_PREFIX}10.${FONT_COLOR_SUFFIX} 清理日志+定时任务          ${GREEN_FONT_PREFIX}0.${FONT_COLOR_SUFFIX} 退出脚本
 ————————————————————————————————————————————————————————————————"
 	echo ""
 	read -p " 请输入数字: " num
@@ -2621,7 +2621,7 @@ start_menu() {
 	7) optimizing_nft_forward ;;
 	8) install_base_packages ;;
 	9) upgrade_system_version ;;
-	l|L) clean_logs_and_schedule ;;
+	10) clean_logs_and_schedule ;;
 	0) exit 0 ;;
 	*)
 		echo -e "${ERROR}: 请输入正确数字"
