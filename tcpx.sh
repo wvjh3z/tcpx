@@ -1466,7 +1466,7 @@ EOF
 		find /etc/apt/sources.list.d/ -name "*.sources" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
 
 		echo -e "${INFO} [3/5] 更新包索引..."
-		apt-get update --allow-releaseinfo-change 2>&1 | tail -5
+		apt-get update --allow-releaseinfo-change --allow-insecure-repositories 2>&1 | tail -5
 		# 验证: 检查目标版本的包是否可用
 		local update_ok=0
 		if apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}\|${target_version}"; then
@@ -1475,9 +1475,15 @@ EOF
 			update_ok=1
 		fi
 		if [[ $update_ok -eq 0 ]]; then
+			echo -e "${TIP} 标准方式失败，尝试强制更新..."
+			apt-get update --allow-unauthenticated 2>/dev/null
+			if apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}\|${target_version}"; then
+				update_ok=1
+			fi
+		fi
+		if [[ $update_ok -eq 0 ]]; then
 			echo -e "${ERROR} 目标版本 (${target_codename}) 的包索引获取失败！"
 			echo -e "${TIP} 可能原因: 网络不通或 GPG 签名验证失败"
-			echo -e "${TIP} 尝试手动: apt-get update --allow-insecure-repositories"
 			return 1
 		fi
 		echo -e "${INFO} 包索引更新成功。"
@@ -1533,7 +1539,12 @@ EOF
 		find /etc/apt/sources.list.d/ -name "*.sources" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
 
 		echo -e "${INFO} [3/4] 更新包索引..."
-		apt-get update --allow-releaseinfo-change 2>&1 | tail -5
+		# Ubuntu 跨版本升级: 旧 keyring 可能不信任新版本签名，允许不安全源获取索引
+		apt-get update --allow-releaseinfo-change --allow-insecure-repositories 2>&1 | tail -5
+		if ! apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}\|${target_version}"; then
+			echo -e "${TIP} 标准方式失败，尝试强制更新..."
+			apt-get update --allow-unauthenticated 2>/dev/null
+		fi
 		if ! apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}\|${target_version}"; then
 			echo -e "${ERROR} 目标版本 (${target_codename}) 的包索引获取失败！"
 			return 1
