@@ -1505,10 +1505,12 @@ EOF
 
 	elif [[ "$OS_ID" == "ubuntu" ]]; then
 		# Ubuntu 升级流程 (直接修改源 + dist-upgrade，比 do-release-upgrade 更可靠)
-		echo -e "${INFO} [1/4] 更新当前系统到最新状态..."
+		echo -e "${INFO} [1/4] 更新当前系统并安装目标版本密钥..."
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update && apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 		apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+		# 安装目标版本的 keyring (解决跨版本签名信任问题)
+		apt-get install -y ubuntu-keyring 2>/dev/null
 
 		echo -e "${INFO} [2/4] 写入新版本源 (${target_codename} @ ${mirror_url})..."
 		local sources_file="/etc/apt/sources.list"
