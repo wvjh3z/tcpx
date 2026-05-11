@@ -502,6 +502,12 @@ _apply_apt_mirror() {
 		echo -e "${INFO} 已备份原始源到 ${sources_file}.bak.*"
 	fi
 
+	# Ubuntu 24.04+ 使用 DEB822 格式 (.sources)，需要禁用以避免重复源
+	if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+		mv /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.disabled
+		echo -e "${INFO} 已禁用 DEB822 格式源: ubuntu.sources → ubuntu.sources.disabled"
+	fi
+
 	local codename="${OS_VERSION_CODENAME}"
 	if [[ -z "$codename" ]]; then
 		if [[ "$OS_ID" == "debian" ]]; then
@@ -653,8 +659,7 @@ net.core.netdev_max_backlog = 65535
 # --- END 中国大陆优化 ---
 EOF
 
-	sysctl -p "$sysctl_conf" >/dev/null 2>&1
-	sysctl --system >/dev/null 2>&1
+	_safe_sysctl_apply "$sysctl_conf"
 	echo -e "${INFO} 中国大陆 TCP 链路优化参数已应用！"
 }
 
@@ -901,8 +906,7 @@ net.ipv6.conf.all.forwarding = 1
 # --- END 海外优化 ---
 EOF
 
-	sysctl -p "$sysctl_conf" >/dev/null 2>&1
-	sysctl --system >/dev/null 2>&1
+	_safe_sysctl_apply "$sysctl_conf"
 	echo -e "${INFO} 海外服务器 TCP 优化参数已应用！"
 }
 
@@ -1507,6 +1511,16 @@ clean_logs_and_schedule() {
 	echo -e "${INFO} 清理系统日志 & 配置定时清理任务"
 	echo -e "${INFO} ================================================"
 	echo -e ""
+	echo -e "${INFO} 将执行以下操作:"
+	echo -e "  • 删除旧日志文件 (*.gz, *.1, *.old)"
+	echo -e "  • 置空当前核心日志 (syslog, auth.log 等)"
+	echo -e "  • 禁用 journald 磁盘存储"
+	echo -e "  • 配置 crontab 每天 03:00 自动清理"
+	echo -e ""
+	if _is_interactive; then
+		read -p "确认执行？(回车确认, n取消): " confirm
+		[[ "$confirm" =~ ^[nN]$ ]] && { echo -e "${INFO} 已取消。"; return 0; }
+	fi
 
 	# 1. 创建独立清理脚本
 	echo -e "${INFO} [1/4] 创建日志清理脚本 /root/clean_logs.sh..."
@@ -1859,7 +1873,7 @@ install_base_packages() {
 	echo -e "  • 清理系统日志 (保留 1 天 / 最大 10MB)"
 	echo -e "  • 安装 NextTrace 路由追踪工具"
 	echo -e ""
-	if [[ -t 0 ]]; then
+	if _is_interactive; then
 		read -p "确认执行？(回车确认, n取消): " confirm
 		[[ "$confirm" =~ ^[nN]$ ]] && { echo -e "${INFO} 已取消。"; return 0; }
 	fi
