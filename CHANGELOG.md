@@ -3,6 +3,12 @@
 ## v1.2
 
 ### 新增
+- **菜单 [14] 一键DD系统** — 调用 bin456789/reinstall 重装系统
+  - 多镜像加速下载（cnb.cool / ghfast / gh-proxy / GitHub 直连）
+  - 国内自动优先使用加速源
+  - 支持 Debian/Ubuntu/CentOS/AlmaLinux/Rocky/Fedora/Alpine/Windows/DD
+  - 高危操作需输入 YES 确认
+  - 支持 CLI: `reinstall`
 - **菜单 [13] 设置 IPv4 优先** — 独立菜单设置 IPv4 优先出站
   - 写入 `/etc/gai.conf` precedence 规则
   - 自动检测当前状态（已设置时提示是否重新写入）

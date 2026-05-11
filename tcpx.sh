@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 #
 # TCP加速 一键安装管理脚本 (优化版)
-# 基于 ylx2016/Linux-NetSpeed 重构优化
+# 基于 ylx2016/Linux-NetSpeed (GPL-2.0) 重构优化
 # 仅支持: Debian 10-13, Ubuntu 20.04-26.04
+#
+# Copyright (c) 2025 wvjh3z
+# License: GPL-2.0 (https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
+# Source: https://github.com/wvjh3z/tcpx
 #
 
 # 自动修复 Windows CRLF 换行符 (从 Windows 复制过来时会带 \r)
@@ -1990,6 +1994,110 @@ set_ipv4_priority() {
 }
 
 # =================================================
+#  一键DD系统 (调用 bin456789/reinstall)
+# =================================================
+reinstall_system() {
+	echo -e "${INFO} ================================================"
+	echo -e "${INFO} 一键DD系统 (bin456789/reinstall)"
+	echo -e "${INFO} ================================================"
+	echo -e ""
+	echo -e "${TIP} 此功能将调用第三方脚本重装系统，执行后当前系统数据将被清除！"
+	echo -e "${TIP} 项目地址: https://github.com/bin456789/reinstall"
+	echo -e ""
+
+	# 多镜像源列表 (按优先级排列)
+	local script_urls=()
+	if [[ $IS_CN -eq 1 ]]; then
+		script_urls=(
+			"https://cnb.cool/bin456789/reinstall/-/git/raw/main/reinstall.sh"
+			"https://ghfast.top/https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.sh"
+			"https://gh-proxy.com/https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.sh"
+			"https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.sh"
+		)
+	else
+		script_urls=(
+			"https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.sh"
+			"https://cnb.cool/bin456789/reinstall/-/git/raw/main/reinstall.sh"
+		)
+	fi
+
+	# 显示支持的系统列表
+	echo -e " 支持的系统:"
+	echo -e "  ─────────────────────────────────────────────"
+	echo -e "  ${GREEN_FONT_PREFIX}Debian${FONT_COLOR_SUFFIX}:     9 | 10 | 11 | 12 | 13"
+	echo -e "  ${GREEN_FONT_PREFIX}Ubuntu${FONT_COLOR_SUFFIX}:     18.04 | 20.04 | 22.04 | 24.04 | 26.04"
+	echo -e "  ${GREEN_FONT_PREFIX}CentOS${FONT_COLOR_SUFFIX}:     9 | 10"
+	echo -e "  ${GREEN_FONT_PREFIX}AlmaLinux${FONT_COLOR_SUFFIX}:  8 | 9 | 10"
+	echo -e "  ${GREEN_FONT_PREFIX}Rocky${FONT_COLOR_SUFFIX}:      8 | 9 | 10"
+	echo -e "  ${GREEN_FONT_PREFIX}Fedora${FONT_COLOR_SUFFIX}:     43 | 44"
+	echo -e "  ${GREEN_FONT_PREFIX}Alpine${FONT_COLOR_SUFFIX}:     3.20 | 3.21 | 3.22 | 3.23"
+	echo -e "  ${GREEN_FONT_PREFIX}Windows${FONT_COLOR_SUFFIX}:    需指定 --image-name"
+	echo -e "  ${GREEN_FONT_PREFIX}DD${FONT_COLOR_SUFFIX}:         需指定 --img=URL"
+	echo -e "  ─────────────────────────────────────────────"
+	echo -e ""
+	echo -e " 用法示例:"
+	echo -e "   debian 12          — 重装为 Debian 12"
+	echo -e "   ubuntu 24.04       — 重装为 Ubuntu 24.04"
+	echo -e "   dd --img=http://x  — DD 自定义镜像"
+	echo -e ""
+
+	if ! _is_interactive; then
+		echo -e "${ERROR} 此功能需要交互式终端，不支持管道模式。"
+		return 1
+	fi
+
+	read -p " 请输入要安装的系统 (例: debian 12): " reinstall_args
+	if [[ -z "$reinstall_args" ]]; then
+		echo -e "${INFO} 操作已取消。"
+		return 0
+	fi
+
+	echo -e ""
+	echo -e "${RED_FONT_PREFIX}警告: 即将重装系统为 [${reinstall_args}]，当前系统所有数据将被清除！${FONT_COLOR_SUFFIX}"
+	read -p " 确认执行？请输入 YES 继续: " confirm
+	if [[ "$confirm" != "YES" ]]; then
+		echo -e "${INFO} 操作已取消。"
+		return 0
+	fi
+
+	# 多源下载脚本
+	echo -e ""
+	echo -e "${INFO} 正在下载 reinstall.sh 脚本..."
+	local script_file="/tmp/reinstall_$$.sh"
+	local download_ok=0
+
+	for url in "${script_urls[@]}"; do
+		echo -e "${INFO} 尝试: ${url%%/reinstall*}..."
+		if curl -fsSL --max-time 15 -o "$script_file" "$url" 2>/dev/null && [[ -s "$script_file" ]]; then
+			download_ok=1
+			echo -e "${INFO} 下载成功！"
+			break
+		fi
+		rm -f "$script_file"
+	done
+
+	if [[ $download_ok -eq 0 ]]; then
+		echo -e "${ERROR} 所有镜像源下载失败，请检查网络后重试。"
+		return 1
+	fi
+
+	# 执行重装
+	echo -e "${INFO} 正在执行: bash reinstall.sh ${reinstall_args}"
+	echo -e ""
+	bash "$script_file" $reinstall_args
+	local ret=$?
+
+	rm -f "$script_file"
+
+	if [[ $ret -ne 0 ]]; then
+		echo -e "${ERROR} reinstall.sh 执行失败 (退出码: $ret)"
+		return 1
+	fi
+
+	_log "INFO" "reinstall_system executed: ${reinstall_args}"
+}
+
+# =================================================
 #  基础系统包安装与初始化
 # =================================================
 install_base_packages() {
@@ -2970,7 +3078,7 @@ start_menu() {
  ${GREEN_FONT_PREFIX}8.${FONT_COLOR_SUFFIX} 安装基础系统包              ${GREEN_FONT_PREFIX}9.${FONT_COLOR_SUFFIX} 系统大版本升级
  ${GREEN_FONT_PREFIX}10.${FONT_COLOR_SUFFIX} 清理日志+定时任务          ${GREEN_FONT_PREFIX}11.${FONT_COLOR_SUFFIX} 安装WARP IPv6
  ${GREEN_FONT_PREFIX}12.${FONT_COLOR_SUFFIX} 添加虚拟内存(Swap)         ${GREEN_FONT_PREFIX}13.${FONT_COLOR_SUFFIX} 设置IPv4优先
- ${GREEN_FONT_PREFIX}0.${FONT_COLOR_SUFFIX} 退出脚本
+ ${GREEN_FONT_PREFIX}14.${FONT_COLOR_SUFFIX} 一键DD系统                 ${GREEN_FONT_PREFIX}0.${FONT_COLOR_SUFFIX} 退出脚本
 ————————————————————————————————————————————————————————————————"
 	echo ""
 	read -p " 请输入数字: " num
@@ -2988,6 +3096,7 @@ start_menu() {
 	11) install_warp_ipv6 ;;
 	12) setup_swap ;;
 	13) set_ipv4_priority ;;
+	14) reinstall_system ;;
 	0) exit 0 ;;
 	*)
 		echo -e "${ERROR}: 请输入正确数字"
@@ -3019,6 +3128,7 @@ show_help() {
 	echo "  warp6          安装 WARP IPv6"
 	echo "  swap           添加虚拟内存"
 	echo "  ipv4prio       设置 IPv4 优先"
+	echo "  reinstall      一键DD系统"
 	echo ""
 	echo "推荐流程: 8 → 1 → 4 → 重启"
 	echo "  基础包 → XanMod 内核 → 智能优化 → 重启生效"
@@ -3082,6 +3192,10 @@ if [[ $# -gt 0 ]]; then
 		;;
 	ipv4prio)
 		set_ipv4_priority
+		exit 0
+		;;
+	reinstall)
+		reinstall_system
 		exit 0
 		;;
 	*)
