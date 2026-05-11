@@ -1511,16 +1511,6 @@ clean_logs_and_schedule() {
 	echo -e "${INFO} 清理系统日志 & 配置定时清理任务"
 	echo -e "${INFO} ================================================"
 	echo -e ""
-	echo -e "${INFO} 将执行以下操作:"
-	echo -e "  • 删除旧日志文件 (*.gz, *.1, *.old)"
-	echo -e "  • 置空当前核心日志 (syslog, auth.log 等)"
-	echo -e "  • 禁用 journald 磁盘存储"
-	echo -e "  • 配置 crontab 每天 03:00 自动清理"
-	echo -e ""
-	if _is_interactive; then
-		read -p "确认执行？(回车确认, n取消): " confirm
-		[[ "$confirm" =~ ^[nN]$ ]] && { echo -e "${INFO} 已取消。"; return 0; }
-	fi
 
 	# 1. 创建独立清理脚本
 	echo -e "${INFO} [1/4] 创建日志清理脚本 /root/clean_logs.sh..."
