@@ -28,8 +28,6 @@ _ERROR_COUNT=0
 #  全局配置区 (Configuration as Data)
 # =================================================
 readonly SH_VER="1.2"
-readonly GITHUB_RAW_URL="https://raw.githubusercontent.com/ylx2016/Linux-NetSpeed/master"
-readonly GITHUB_API_URL="https://api.github.com/repos/ylx2016/kernel/releases"
 
 # 颜色变量定义
 readonly GREEN_FONT_PREFIX="\033[32m"
@@ -95,7 +93,7 @@ _check_disk_space() {
 		echo -e "${ERROR} 磁盘空间不足！"
 		echo -e "  需要: ${required_mb}MB"
 		echo -e "  可用: ${available_mb}MB (/boot 或 /)"
-		echo -e "  建议: 清理旧内核 (菜单 [52]) 或扩容磁盘"
+		echo -e "  建议: 清理旧内核 (菜单 [3]) 或扩容磁盘"
 		return 1
 	fi
 	return 0
@@ -528,13 +526,13 @@ optimizing_smart() {
 		echo -e ""
 		_optimize_cn_tcp_params
 		echo -e ""
-		echo -e "${TIP} 如需更换软件源/DNS，请手动执行菜单 [34]"
+		echo -e "${TIP} 如需更换软件源，请手动执行菜单 [5]"
 	else
 		echo -e "${INFO} 检测到海外网络环境，自动应用高带宽低延迟优化..."
 		echo -e ""
 		_optimize_overseas_tcp_params
 		echo -e ""
-		echo -e "${TIP} 如需配置 DNS，请手动执行菜单 [39]"
+		echo -e "${TIP} 如需更换软件源，请手动执行菜单 [6]"
 	fi
 
 	echo -e ""
@@ -739,9 +737,8 @@ EOF
 # 针对中国大陆服务器的特殊网络环境进行优化:
 # 1. 高延迟跨境链路 TCP 调参 (中国 ↔ 海外 RTT 通常 150-300ms)
 # 2. 系统软件源替换为国内镜像 (加速 apt)
-# 3. DNS 优化 (使用国内高速 DNS)
-# 4. TCP 窗口与重传策略针对高丢包环境优化
-# 5. MTU/MSS 探测优化 (应对中间设备)
+# 3. TCP 窗口与重传策略针对高丢包环境优化
+# 4. MTU/MSS 探测优化 (应对中间设备)
 #
 
 # 替换 APT 源 (通用执行函数)
@@ -2485,13 +2482,13 @@ install_xanmod_generic() {
 	buster|bullseye)
 		echo -e "${ERROR} XanMod 不再支持 Debian ${OS_VERSION_ID} (${codename})！"
 		echo -e "${TIP} 最低要求: Debian 12 (bookworm)"
-		echo -e "${TIP} 建议升级系统或使用菜单 [1] 安装 ylx2016 编译的 BBR 内核。"
+		echo -e "${TIP} 建议先升级系统 (菜单 [9])，升级后即可安装 XanMod。"
 		return 1
 		;;
 	focal|jammy)
 		echo -e "${ERROR} XanMod 不再支持 Ubuntu ${OS_VERSION_ID} (${codename})！"
 		echo -e "${TIP} 最低要求: Ubuntu 24.04 (noble)"
-		echo -e "${TIP} 建议升级系统或使用菜单 [8] 安装官方最新内核 (HWE)。"
+		echo -e "${TIP} 建议先升级系统 (菜单 [9])，升级后即可安装 XanMod。"
 		return 1
 		;;
 	esac
@@ -2530,7 +2527,7 @@ install_xanmod_generic() {
 	# 中国大陆网络提示
 	if [[ $IS_CN -eq 1 ]]; then
 		echo -e "${TIP} 检测到中国大陆网络，XanMod 源可能较慢。"
-		echo -e "${TIP} 如遇下载缓慢，可先执行菜单 [34] 配置 APT 代理后再安装。"
+		echo -e "${TIP} 如遇下载缓慢，可先执行菜单 [5] 换源后再安装。"
 	fi
 
 	# 清理旧配置
@@ -3209,4 +3206,14 @@ fi
 # 交互式启动
 check_sys
 check_cn_status
+
+if ! _is_interactive; then
+	echo -e "${ERROR} 未指定操作参数，且当前为非交互模式 (管道)。"
+	echo -e "${TIP} 管道模式请指定参数，例如: curl ... | bash -s op0"
+	echo -e "${TIP} 交互模式请使用: bash <(curl ...)"
+	echo -e ""
+	show_help
+	exit 1
+fi
+
 start_menu
