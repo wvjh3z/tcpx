@@ -536,8 +536,13 @@ _apply_apt_mirror() {
 		local security_suite="${codename}-security"
 		[[ "${OS_VERSION_ID}" == "10" ]] && security_suite="${codename}/updates"
 
-		# security 源始终使用官方地址 (部分镜像不完整或有重定向问题)
-		local security_mirror="deb.debian.org"
+		# security 源: 优先使用选中的镜像，不可用时回退官方
+		local security_mirror="${mirror_url}"
+		local sec_test_url="https://${mirror_url}/debian-security/dists/${security_suite}/Release"
+		if ! curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$sec_test_url" 2>/dev/null | grep -q "200"; then
+			security_mirror="deb.debian.org"
+			echo -e "${TIP} 镜像无 debian-security，security 源使用官方: deb.debian.org"
+		fi
 
 		# 生成 sources.list
 		cat >"$sources_file" <<EOF
@@ -562,12 +567,21 @@ EOF
 	fi
 
 	echo -e "${INFO} 源已替换为: ${GREEN_FONT_PREFIX}${mirror_url}${FONT_COLOR_SUFFIX}"
-	echo -e "${INFO} 正在刷新包索引..."
-	if apt-get update 2>&1 | tail -3; then
-		echo -e "${INFO} 换源完成！"
-	else
-		echo -e "${TIP} apt-get update 有警告，但源文件已写入。"
+	echo -e "${INFO} 正在验证新源是否可用..."
+	if ! apt-get update 2>&1 | tail -5; then
+		echo -e "${ERROR} 新源验证失败！正在恢复备份..."
+		# 恢复备份
+		local latest_bak
+		latest_bak=$(ls -t "${sources_file}.bak."* 2>/dev/null | head -1)
+		if [[ -n "$latest_bak" ]]; then
+			cp "$latest_bak" "$sources_file"
+			apt-get update >/dev/null 2>&1
+			echo -e "${INFO} 已恢复到之前的源配置。"
+		fi
+		echo -e "${TIP} 可能原因: 镜像源不完整或网络不通"
+		return 1
 	fi
+	echo -e "${INFO} 换源完成！"
 	_log "INFO" "APT mirror changed to: ${mirror_url}"
 }
 
@@ -1372,8 +1386,12 @@ upgrade_system_version() {
 	echo -e "${TIP} • 升级完成后需要重启"
 	echo -e "${TIP} =============================================="
 	echo -e ""
-	read -p "确认要升级吗？(输入大写 YES 确认): " confirm
-	if ! _is_interactive; then confirm="YES"; fi
+	local confirm=""
+	if _is_interactive; then
+		read -p "确认要升级吗？(输入大写 YES 确认): " confirm
+	else
+		confirm="YES"
+	fi
 	[[ "$confirm" != "YES" ]] && { echo -e "${INFO} 已取消。"; return 0; }
 
 	# 测速选择最快镜像
@@ -1392,8 +1410,9 @@ upgrade_system_version() {
 	if [[ "$OS_ID" == "debian" ]]; then
 		# Debian 升级流程
 		echo -e "${INFO} [1/4] 更新当前系统到最新状态..."
-		apt-get update && apt-get upgrade -y
-		apt-get dist-upgrade -y
+		export DEBIAN_FRONTEND=noninteractive
+		apt-get update && apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+		apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 		echo -e "${INFO} [2/4] 写入新版本源 (${target_codename} @ ${mirror_url})..."
 		local sources_file="/etc/apt/sources.list"
@@ -1408,11 +1427,19 @@ upgrade_system_version() {
 		local security_suite="${target_codename}-security"
 		[[ "$target_codename" == "buster" ]] && security_suite="buster/updates"
 
+		# security 源: 优先镜像，不可用时回退官方
+		local security_mirror="${mirror_url}"
+		local sec_test_url="https://${mirror_url}/debian-security/dists/${security_suite}/Release"
+		if ! curl -sL --max-time 5 -o /dev/null -w "%{http_code}" "$sec_test_url" 2>/dev/null | grep -q "200"; then
+			security_mirror="deb.debian.org"
+			echo -e "${TIP} 镜像无 debian-security，security 源使用官方: deb.debian.org"
+		fi
+
 		cat >"$sources_file" <<EOF
 # Debian ${target_codename} - 升级源 (${mirror_url})
 deb https://${mirror_url}/debian/ ${target_codename} ${components}
 deb https://${mirror_url}/debian/ ${target_codename}-updates ${components}
-deb https://deb.debian.org/debian-security/ ${security_suite} ${components}
+deb https://${security_mirror}/debian-security/ ${security_suite} ${components}
 EOF
 
 		# 清理 sources.list.d 中的旧版本源 (避免冲突)
@@ -1420,11 +1447,14 @@ EOF
 		find /etc/apt/sources.list.d/ -name "*.sources" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
 
 		echo -e "${INFO} [3/4] 更新包索引..."
-		if ! apt-get update; then
-			echo -e "${ERROR} apt-get update 失败，请检查网络和源配置！"
+		apt-get update 2>&1 | tail -5
+		# 检查核心包索引是否存在 (即使 apt-get update 有 warning 也继续)
+		if ! apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}"; then
+			echo -e "${ERROR} 目标版本 (${target_codename}) 的包索引获取失败！"
 			echo -e "${TIP} 源文件: cat /etc/apt/sources.list"
 			return 1
 		fi
+		echo -e "${INFO} 包索引更新成功。"
 
 		echo -e "${INFO} [4/4] 执行系统升级 (这可能需要 5-30 分钟)..."
 		export DEBIAN_FRONTEND=noninteractive
@@ -1449,8 +1479,9 @@ EOF
 	elif [[ "$OS_ID" == "ubuntu" ]]; then
 		# Ubuntu 升级流程 (直接修改源 + dist-upgrade，比 do-release-upgrade 更可靠)
 		echo -e "${INFO} [1/4] 更新当前系统到最新状态..."
-		apt-get update && apt-get upgrade -y
-		apt-get dist-upgrade -y
+		export DEBIAN_FRONTEND=noninteractive
+		apt-get update && apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+		apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 		echo -e "${INFO} [2/4] 写入新版本源 (${target_codename} @ ${mirror_url})..."
 		local sources_file="/etc/apt/sources.list"
@@ -1468,10 +1499,12 @@ EOF
 		find /etc/apt/sources.list.d/ -name "*.sources" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
 
 		echo -e "${INFO} [3/4] 更新包索引..."
-		if ! apt-get update; then
-			echo -e "${ERROR} apt-get update 失败，请检查网络和源配置！"
+		apt-get update 2>&1 | tail -5
+		if ! apt-cache policy base-files 2>/dev/null | grep -q "${target_codename}"; then
+			echo -e "${ERROR} 目标版本 (${target_codename}) 的包索引获取失败！"
 			return 1
 		fi
+		echo -e "${INFO} 包索引更新成功。"
 
 		echo -e "${INFO} [4/4] 执行系统升级 (这可能需要 5-30 分钟)..."
 		export DEBIAN_FRONTEND=noninteractive
