@@ -1369,10 +1369,7 @@ upgrade_system_version() {
 	echo -e "${TIP} =============================================="
 	echo -e ""
 	read -p "确认要升级吗？(输入大写 YES 确认): " confirm
-	if ! _is_interactive; then
-		confirm="YES"
-		echo -e "${INFO} 非交互模式，自动确认升级。"
-	fi
+	if ! _is_interactive; then confirm="YES"; fi
 	[[ "$confirm" != "YES" ]] && { echo -e "${INFO} 已取消。"; return 0; }
 
 	# 测速选择最快镜像
@@ -1651,9 +1648,10 @@ setup_swap() {
 	fi
 
 	# 设置 swappiness (低值 = 尽量用物理内存)
-	if ! grep -q "vm.swappiness" /etc/sysctl.conf; then
-		echo "vm.swappiness=10" >> /etc/sysctl.conf
-	fi
+	local sysctl_conf="/etc/sysctl.d/99-sysctl.conf"
+	[[ ! -f "$sysctl_conf" ]] && touch "$sysctl_conf"
+	sed -i '/vm.swappiness/d' "$sysctl_conf" /etc/sysctl.conf 2>/dev/null
+	echo "vm.swappiness=10" >> "$sysctl_conf"
 	sysctl -w vm.swappiness=10 >/dev/null 2>&1
 
 	echo -e ""
@@ -2535,7 +2533,7 @@ install_warp_ipv6() {
 	echo -e ""
 	echo -e "${INFO} [2/5] 安装 wgcf (WARP 注册工具)..."
 	# 从 GitHub 下载 wgcf 二进制
-	local wgcf_url="https://github.com/ViRb3/wgcf/releases/download/v2.2.30/wgcf_2.2.30_linux_${arch}"
+	local wgcf_url="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${arch}"
 	if ! safe_wget "$wgcf_url" "/usr/local/bin/wgcf"; then
 		echo -e "${ERROR} wgcf 下载失败！"
 		return 1
@@ -2714,103 +2712,6 @@ show_status_panel_brief() {
 	echo -e ""
 }
 
-# 详细状态面板 (保留供调试使用)
-show_status_panel() {
-	clear
-	echo -e "════════════════════════════════════════════════════════════════"
-	echo -e "  ${GREEN_FONT_PREFIX}系统运行状态面板${FONT_COLOR_SUFFIX}"
-	echo -e "════════════════════════════════════════════════════════════════"
-	echo -e ""
-
-	# 系统信息
-	local os_info kern_info uptime_info
-	os_info=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo "Unknown")
-	kern_info=$(uname -r)
-	uptime_info=$(uptime -p 2>/dev/null || uptime | awk -F'up ' '{print $2}' | awk -F',' '{print $1,$2}')
-
-	echo -e "  ${GREEN_FONT_PREFIX}[系统]${FONT_COLOR_SUFFIX}"
-	echo -e "  操作系统:   $os_info"
-	echo -e "  内核版本:   $kern_info"
-	echo -e "  运行时间:   $uptime_info"
-	echo -e "  系统架构:   $(uname -m)"
-
-	# 虚拟化
-	local virt="物理机"
-	if command -v systemd-detect-virt >/dev/null 2>&1; then
-		local v=$(systemd-detect-virt 2>/dev/null)
-		[[ "$v" != "none" && -n "$v" ]] && virt="$v"
-	fi
-	echo -e "  虚拟化:     $virt"
-
-	# CPU 和内存
-	echo -e ""
-	echo -e "  ${GREEN_FONT_PREFIX}[硬件]${FONT_COLOR_SUFFIX}"
-	local cpu_model cpu_cores mem_total mem_used mem_pct
-	cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ //')
-	cpu_cores=$(nproc)
-	mem_total=$(free -m | awk '/Mem:/ {print $2}')
-	mem_used=$(free -m | awk '/Mem:/ {print $3}')
-	mem_pct=$((mem_used * 100 / mem_total))
-	echo -e "  CPU:        ${cpu_model} (${cpu_cores}核)"
-	echo -e "  内存:       ${mem_used}MB / ${mem_total}MB (${mem_pct}%)"
-
-	local disk_info
-	disk_info=$(df -h / | awk 'NR==2 {printf "%s / %s (%s)", $3, $2, $5}')
-	echo -e "  磁盘(/):   $disk_info"
-
-	# 网络状态
-	echo -e ""
-	echo -e "  ${GREEN_FONT_PREFIX}[网络]${FONT_COLOR_SUFFIX}"
-	local cc qdisc
-	cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "unknown")
-	qdisc=$(cat /proc/sys/net/core/default_qdisc 2>/dev/null || echo "unknown")
-	echo -e "  拥塞控制:   $cc"
-	echo -e "  队列算法:   $qdisc"
-	echo -e "  ECN:        $(cat /proc/sys/net/ipv4/tcp_ecn 2>/dev/null || echo 'unknown')"
-	echo -e "  TCP Fast Open: $(cat /proc/sys/net/ipv4/tcp_fastopen 2>/dev/null || echo 'unknown')"
-	echo -e "  IP 转发:    $(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 'unknown')"
-
-	# conntrack (如果有)
-	if [[ -f /proc/sys/net/netfilter/nf_conntrack_count ]]; then
-		local ct_count ct_max ct_pct
-		ct_count=$(cat /proc/sys/net/netfilter/nf_conntrack_count)
-		ct_max=$(cat /proc/sys/net/netfilter/nf_conntrack_max)
-		ct_pct=$((ct_count * 100 / ct_max))
-		echo -e "  Conntrack:  ${ct_count} / ${ct_max} (${ct_pct}%)"
-	fi
-
-	# 端口范围
-	echo -e "  端口范围:   $(cat /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null | tr '\t' '-')"
-
-	# 文件描述符
-	echo -e ""
-	echo -e "  ${GREEN_FONT_PREFIX}[资源限制]${FONT_COLOR_SUFFIX}"
-	local fd_used fd_max
-	fd_used=$(cat /proc/sys/fs/file-nr | awk '{print $1}')
-	fd_max=$(cat /proc/sys/fs/file-max)
-	echo -e "  文件描述符: ${fd_used} / ${fd_max}"
-	echo -e "  somaxconn:  $(cat /proc/sys/net/core/somaxconn 2>/dev/null)"
-	echo -e "  rmem_max:   $(( $(cat /proc/sys/net/core/rmem_max 2>/dev/null) / 1024 / 1024 ))MB"
-	echo -e "  wmem_max:   $(( $(cat /proc/sys/net/core/wmem_max 2>/dev/null) / 1024 / 1024 ))MB"
-
-	# 已安装的内核
-	echo -e ""
-	echo -e "  ${GREEN_FONT_PREFIX}[已安装内核]${FONT_COLOR_SUFFIX}"
-	dpkg-query -W -f='${Package}\n' 2>/dev/null | grep "^linux-image-[0-9]" | sort -V | while read -r pkg; do
-		if [[ "$pkg" == *"$(uname -r)"* ]]; then
-			echo -e "  ${GREEN_FONT_PREFIX}► $pkg [当前运行]${FONT_COLOR_SUFFIX}"
-		else
-			echo -e "    $pkg"
-		fi
-	done
-
-	echo -e ""
-	echo -e "════════════════════════════════════════════════════════════════"
-	echo ""
-	read -p "按回车返回主菜单..."
-	start_menu
-}
-
 # =================================================
 #  主菜单
 # =================================================
@@ -2898,7 +2799,7 @@ if [[ $# -gt 0 ]]; then
 	check_sys
 	check_cn_status
 	case "$1" in
-	op0 | op1 | op2)
+	op0)
 		optimizing_smart
 		exit 0
 		;;
