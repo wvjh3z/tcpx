@@ -1510,6 +1510,10 @@ EOF
 		apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 		# 强制安装所有剩余可升级包 (do-release-upgrade 要求 0 not upgraded)
 		apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" $(apt list --upgradable 2>/dev/null | grep -v "^Listing" | cut -d/ -f1) 2>/dev/null
+		# 禁用 phased updates (Ubuntu 分阶段更新会导致 "not upgraded" 残留)
+		echo 'APT::Get::Always-Include-Phased-Updates "true";' > /etc/apt/apt.conf.d/99-phased-updates
+		apt-get update >/dev/null 2>&1
+		apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" 2>/dev/null
 
 		echo -e "${INFO} [2/3] 准备升级环境..."
 		apt-get install -y update-manager-core 2>/dev/null
