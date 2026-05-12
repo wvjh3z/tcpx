@@ -1507,6 +1507,7 @@ EOF
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update
 		apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+		apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 		echo -e "${INFO} [2/3] 准备升级环境..."
 		apt-get install -y update-manager-core 2>/dev/null
