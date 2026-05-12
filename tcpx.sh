@@ -1467,21 +1467,13 @@ EOF
 
 		echo -e "${INFO} [3/5] 更新包索引..."
 		apt-get update --allow-releaseinfo-change --allow-insecure-repositories 2>&1 | tail -5
-		# 验证: 检查目标版本的包是否可用
-		local update_ok=0
-		if apt-cache policy base-files 2>/dev/null | grep -qE "${target_codename}|${target_version}"; then
-			update_ok=1
-		elif apt-cache showpkg base-files 2>/dev/null | grep -q "${target_codename}"; then
-			update_ok=1
-		fi
-		if [[ $update_ok -eq 0 ]]; then
+		# 验证: 检查 apt 包列表文件是否存在
+		local apt_lists_dir="/var/lib/apt/lists"
+		if ! ls ${apt_lists_dir}/*${target_codename}*Packages* >/dev/null 2>&1; then
 			echo -e "${TIP} 标准方式失败，尝试强制更新..."
 			apt-get update --allow-unauthenticated 2>/dev/null
-			if apt-cache policy base-files 2>/dev/null | grep -qE "${target_codename}|${target_version}"; then
-				update_ok=1
-			fi
 		fi
-		if [[ $update_ok -eq 0 ]]; then
+		if ! ls ${apt_lists_dir}/*${target_codename}*Packages* >/dev/null 2>&1; then
 			echo -e "${ERROR} 目标版本 (${target_codename}) 的包索引获取失败！"
 			echo -e "${TIP} 可能原因: 网络不通或 GPG 签名验证失败"
 			return 1
@@ -1510,74 +1502,51 @@ EOF
 		apt-get autoremove -y 2>/dev/null
 
 	elif [[ "$OS_ID" == "ubuntu" ]]; then
-		# Ubuntu 升级流程 (直接改源 + dist-upgrade，与 Debian 相同策略)
-		echo -e "${INFO} [1/5] 更新当前系统到最新状态..."
+		# Ubuntu 升级流程 (必须使用 do-release-upgrade，apt 不允许直接跨版本改源)
+		echo -e "${INFO} [1/3] 更新当前系统到最新状态..."
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update
 		apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
-		echo -e "${INFO} [2/5] 安装目标版本签名密钥..."
-		# 从目标版本镜像直接下载 ubuntu-keyring deb 包安装 (解决跨版本 GPG 信任)
-		local keyring_url="https://${mirror_url}/ubuntu/pool/main/u/ubuntu-keyring/"
-		local keyring_pkg
-		keyring_pkg=$(curl -sL --max-time 10 "$keyring_url" 2>/dev/null | grep -oP 'ubuntu-keyring_[^"]+_all\.deb' | sort -V | tail -1)
-		if [[ -n "$keyring_pkg" ]]; then
-			echo -e "${INFO} 下载: ${keyring_pkg}"
-			curl -fsSL --max-time 30 -o /tmp/ubuntu-keyring.deb "${keyring_url}${keyring_pkg}" 2>/dev/null
-			dpkg -i /tmp/ubuntu-keyring.deb 2>/dev/null
-			rm -f /tmp/ubuntu-keyring.deb
-			echo -e "${INFO} 目标版本密钥已安装。"
-		else
-			echo -e "${TIP} 无法获取新版 keyring，尝试继续..."
-		fi
-
-		echo -e "${INFO} [3/5] 写入新版本源 (${target_codename} @ ${mirror_url})..."
-		local sources_file="/etc/apt/sources.list"
-		cp "$sources_file" "${sources_file}.bak.before-upgrade.$(date +%Y%m%d%H%M%S)"
-
-		# Ubuntu 24.04+ 使用 DEB822 格式，需要禁用
-		if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-			mv /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.disabled
-		fi
-
-		cat >"$sources_file" <<EOF
-# Ubuntu ${target_codename} - 升级源 (${mirror_url})
-deb https://${mirror_url}/ubuntu/ ${target_codename} main restricted universe multiverse
-deb https://${mirror_url}/ubuntu/ ${target_codename}-updates main restricted universe multiverse
-deb https://${mirror_url}/ubuntu/ ${target_codename}-security main restricted universe multiverse
-EOF
-
-		# 清理 sources.list.d 中的旧版本源
-		find /etc/apt/sources.list.d/ -name "*.list" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
-		find /etc/apt/sources.list.d/ -name "*.sources" -exec sed -i "s/${current_codename}/${target_codename}/g" {} \; 2>/dev/null
-
-		echo -e "${INFO} [4/5] 更新包索引..."
-		apt-get update --allow-releaseinfo-change 2>&1 | tail -5
-		# 如果签名验证失败，用 --allow-insecure 重试
-		if ! apt-cache policy base-files 2>/dev/null | grep -qE "${target_codename}|${target_version}"; then
-			echo -e "${TIP} 签名验证未通过，尝试允许不安全源..."
-			apt-get update --allow-releaseinfo-change --allow-insecure-repositories 2>&1 | tail -3
-		fi
-		if ! apt-cache policy base-files 2>/dev/null | grep -qE "${target_codename}|${target_version}"; then
-			echo -e "${ERROR} 目标版本 (${target_codename}) 的包索引获取失败！"
-			echo -e "${TIP} 可能原因: 镜像不支持该版本或网络问题"
-			echo -e "${TIP} 可尝试手动: do-release-upgrade"
+		echo -e "${INFO} [2/3] 准备升级环境..."
+		apt-get install -y update-manager-core 2>/dev/null
+		if ! command -v do-release-upgrade >/dev/null 2>&1; then
+			echo -e "${ERROR} do-release-upgrade 安装失败！"
 			return 1
 		fi
-		echo -e "${INFO} 包索引更新成功。"
 
-		echo -e "${INFO} [5/5] 执行系统升级 (这可能需要 5-30 分钟)..."
-		apt-get -y \
-			-o Dpkg::Options::="--force-confdef" \
-			-o Dpkg::Options::="--force-confold" \
-			dist-upgrade
+		# 确保允许 LTS 升级
+		if [[ -f /etc/update-manager/release-upgrades ]]; then
+			sed -i 's/^Prompt=.*/Prompt=lts/' /etc/update-manager/release-upgrades
+		fi
 
+		# 清除所有阻止升级的标记
+		rm -f /var/run/reboot-required /var/run/reboot-required.pkgs
+		rm -f /run/reboot-required /run/reboot-required.pkgs
+		# 禁用 needrestart 交互提示 (Ubuntu 22.04+)
+		if [[ -f /etc/needrestart/needrestart.conf ]]; then
+			sed -i "s/^#\?\$nrconf{restart}.*$/\$nrconf{restart} = 'a';/" /etc/needrestart/needrestart.conf
+		fi
+		mkdir -p /etc/needrestart/conf.d
+		echo "\$nrconf{restart} = 'a';" > /etc/needrestart/conf.d/99-tcpx.conf 2>/dev/null
+
+		echo -e "${INFO} [3/3] 执行系统升级 (这可能需要 10-30 分钟)..."
+		echo -e "${TIP} 使用 do-release-upgrade 非交互模式..."
+
+		# 设置镜像
+		if [[ "$mirror_url" != "archive.ubuntu.com" ]]; then
+			echo -e "${INFO} 预设镜像: ${mirror_url}"
+			sed -i "s|archive.ubuntu.com|${mirror_url}|g" /etc/apt/sources.list 2>/dev/null
+			sed -i "s|security.ubuntu.com|${mirror_url}|g" /etc/apt/sources.list 2>/dev/null
+		fi
+
+		do-release-upgrade -f DistUpgradeViewNonInteractive
 		local upgrade_ret=$?
 		unset DEBIAN_FRONTEND
 
 		if [[ $upgrade_ret -ne 0 ]]; then
-			echo -e "${ERROR} dist-upgrade 返回错误码 ${upgrade_ret}"
-			echo -e "${TIP} 可尝试: apt-get install -f -y && apt-get dist-upgrade -y"
+			echo -e "${ERROR} do-release-upgrade 返回错误码 ${upgrade_ret}"
+			echo -e "${TIP} 可尝试手动执行: do-release-upgrade"
 		fi
 
 		# 强制更新 base-files
