@@ -1540,13 +1540,6 @@ EOF
 		echo -e "${INFO} [3/3] 执行系统升级 (这可能需要 10-30 分钟)..."
 		echo -e "${TIP} 使用 do-release-upgrade 非交互模式..."
 
-		# do-release-upgrade 只认识官方镜像列表中的源，非官方镜像会被禁用
-		# 因此升级前必须确保 sources.list 使用官方源
-		sed -i "s|${mirror_url}|archive.ubuntu.com|g" /etc/apt/sources.list 2>/dev/null
-		sed -i 's|mirrors\..*\.com|archive.ubuntu.com|g' /etc/apt/sources.list 2>/dev/null
-		# 确保使用 http (do-release-upgrade 对 https 第三方源可能有问题)
-		sed -i 's|https://archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/sources.list 2>/dev/null
-
 		do-release-upgrade -f DistUpgradeViewNonInteractive
 		local upgrade_ret=$?
 		unset DEBIAN_FRONTEND
