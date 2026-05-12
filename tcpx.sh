@@ -1508,6 +1508,8 @@ EOF
 		apt-get update
 		apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 		apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+		# 强制安装所有剩余可升级包 (do-release-upgrade 要求 0 not upgraded)
+		apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" $(apt list --upgradable 2>/dev/null | grep -v "^Listing" | cut -d/ -f1) 2>/dev/null
 
 		echo -e "${INFO} [2/3] 准备升级环境..."
 		apt-get install -y update-manager-core 2>/dev/null
