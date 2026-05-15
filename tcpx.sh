@@ -708,7 +708,7 @@ _speedtest_mirrors() {
 
 	# 并行启动所有测速任务
 	for i in "${!_urls[@]}"; do
-		local url="https://${_urls[$i]}${test_file}"
+		local url="http://${_urls[$i]}${test_file}"
 		(
 			local result
 			result=$(curl -sL --max-time "$timeout" -o /dev/null -w "%{speed_download} %{size_download}" "$url" 2>/dev/null || echo "0 0")
@@ -741,7 +741,7 @@ _speedtest_mirrors() {
 			downloaded_mb=$(echo "$size_bytes" | awk '{printf "%.1f", $1/1024/1024}')
 		fi
 
-		if [[ "$speed_bytes" -gt 1000 ]]; then
+		if [[ "$speed_bytes" -gt 102400 ]]; then
 			printf "  ${GREEN_FONT_PREFIX}%-12s${FONT_COLOR_SUFFIX} %-35s ${GREEN_FONT_PREFIX}%s MB/s${FONT_COLOR_SUFFIX} (已下载 %sMB)\n" \
 				"${_names[$i]}" "${_urls[$i]}" "$speed_mbps" "$downloaded_mb"
 		else
@@ -758,8 +758,10 @@ _speedtest_mirrors() {
 	rm -rf "$tmp_dir"
 
 	echo -e ""
-	if [[ "$best_speed" -le 1000 ]]; then
-		echo -e "${ERROR} 所有镜像源均无法连接，请检查网络后重试。"
+	if [[ "$best_speed" -le 102400 ]]; then
+		echo -e "${ERROR} 所有镜像源速度过低或无法连接，请检查网络后重试。"
+		echo -e "${TIP} 可能原因: 服务器出站网络被限制，或 DNS 解析异常"
+		echo -e "${TIP} 排查: curl -I https://archive.ubuntu.com"
 		_SELECTED_MIRROR=""
 		return 1
 	fi
