@@ -2624,31 +2624,28 @@ install_warp_ipv6() {
 	mkdir -p /etc/warp
 	cd /etc/warp
 
-	# 注册账号
-	if [[ ! -f /etc/warp/wgcf-account.toml ]]; then
-		local retry=0
-		while [[ $retry -lt 3 ]]; do
-			if yes | wgcf register 2>/dev/null; then
-				break
-			fi
-			retry=$((retry + 1))
-			sleep 3
-		done
-		if [[ ! -f wgcf-account.toml ]]; then
-			echo -e "${ERROR} WARP 账号注册失败！可能是网络问题。"
-			cd /root
-			return 1
+	# 每次强制重新注册 (避免旧密钥失效导致握手失败)
+	rm -f /etc/warp/wgcf-account.toml /etc/warp/wgcf-profile.conf
+	local retry=0
+	while [[ $retry -lt 3 ]]; do
+		if yes | wgcf register 2>/dev/null; then
+			break
 		fi
+		retry=$((retry + 1))
+		sleep 3
+	done
+	if [[ ! -f wgcf-account.toml ]]; then
+		echo -e "${ERROR} WARP 账号注册失败！可能是网络问题。"
+		cd /root
+		return 1
 	fi
 
 	# 生成配置
-	if [[ ! -f /etc/warp/wgcf-profile.conf ]]; then
-		wgcf generate 2>/dev/null
-		if [[ ! -f wgcf-profile.conf ]]; then
-			echo -e "${ERROR} WireGuard 配置生成失败！"
-			cd /root
-			return 1
-		fi
+	wgcf generate 2>/dev/null
+	if [[ ! -f wgcf-profile.conf ]]; then
+		echo -e "${ERROR} WireGuard 配置生成失败！"
+		cd /root
+		return 1
 	fi
 	echo -e "${INFO} WARP 账号注册成功，配置已生成。"
 
@@ -2697,7 +2694,7 @@ ${current_ipv6:+PostDown = ip -6 rule delete from ${current_ipv6} lookup main pr
 [Peer]
 PublicKey = ${public_key}
 AllowedIPs = ::/0
-Endpoint = 162.159.192.1:2408
+Endpoint = engage.cloudflareclient.com:2408
 EOF
 
 	echo -e "${INFO} WireGuard 配置已写入 /etc/wireguard/wgcf.conf"
@@ -2706,11 +2703,46 @@ EOF
 	echo -e "${INFO} [5/5] 启动 WARP WireGuard..."
 	systemctl enable wg-quick@wgcf --now 2>/dev/null
 
-	# 等待接口启动
-	sleep 3
+	# 等待握手完成 (最多等 10 秒)
+	echo -e "${INFO} 等待 WireGuard 握手..."
+	local handshake_ok=0
+	for i in $(seq 1 10); do
+		sleep 1
+		if wg show wgcf 2>/dev/null | grep -q "latest handshake"; then
+			handshake_ok=1
+			break
+		fi
+	done
 
-	if systemctl is-active wg-quick@wgcf >/dev/null 2>&1; then
-		echo -e "${INFO} WARP WireGuard 启动成功！"
+	if [[ $handshake_ok -eq 0 ]]; then
+		echo -e "${TIP} 首次握手超时，尝试重新注册密钥..."
+		systemctl stop wg-quick@wgcf 2>/dev/null
+		cd /etc/warp
+		rm -f wgcf-account.toml wgcf-profile.conf
+		yes | wgcf register 2>/dev/null && wgcf generate 2>/dev/null
+		if [[ -f wgcf-profile.conf ]]; then
+			local new_key
+			new_key=$(grep "^PrivateKey" /etc/warp/wgcf-profile.conf | cut -d= -f2- | tr -d ' ')
+			sed -i "s|^PrivateKey = .*|PrivateKey = ${new_key}|" /etc/wireguard/wgcf.conf
+			local new_addr
+			new_addr=$(grep "^Address" /etc/warp/wgcf-profile.conf | cut -d= -f2- | tr -d ' ' | tr ',' '\n' | grep ':' | head -1)
+			local new_addr_bare
+			new_addr_bare=$(echo "$new_addr" | cut -d/ -f1)
+			sed -i "s|^Address = .*|Address = ${new_addr}|" /etc/wireguard/wgcf.conf
+			sed -i "s|from .* lookup 51888|from ${new_addr_bare} lookup 51888|g" /etc/wireguard/wgcf.conf
+		fi
+		systemctl start wg-quick@wgcf 2>/dev/null
+		sleep 5
+		if wg show wgcf 2>/dev/null | grep -q "latest handshake"; then
+			handshake_ok=1
+		fi
+	fi
+
+	if [[ $handshake_ok -eq 1 ]]; then
+		echo -e "${INFO} WARP WireGuard 握手成功！"
+	elif systemctl is-active wg-quick@wgcf >/dev/null 2>&1; then
+		echo -e "${TIP} WireGuard 已启动但握手未完成，可能需要等待几秒。"
+		echo -e "${TIP} 手动检查: wg show wgcf"
 	else
 		echo -e "${ERROR} WARP WireGuard 启动失败！"
 		echo -e "${TIP} 查看日志: journalctl -u wg-quick@wgcf --no-pager"
@@ -2747,6 +2779,15 @@ EOF
 	fi
 	echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf
 	echo -e "${INFO} 已设置 IPv4 优先 (通过 /etc/gai.conf)"
+
+	# 检测出口 IP
+	echo -e ""
+	echo -e "${INFO} 出口 IP 检测:"
+	local default_out ipv6_out
+	default_out=$(curl -s --max-time 5 https://ip.sb 2>/dev/null || curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "获取失败")
+	ipv6_out=$(curl -s6 --max-time 5 https://ip.sb 2>/dev/null || curl -s6 --max-time 5 https://ifconfig.me 2>/dev/null || echo "获取失败")
+	echo -e "  默认出口: ${GREEN_FONT_PREFIX}${default_out}${FONT_COLOR_SUFFIX}"
+	echo -e "  IPv6 出口: ${GREEN_FONT_PREFIX}${ipv6_out}${FONT_COLOR_SUFFIX}"
 
 	_log "INFO" "WARP IPv6 installed"
 }
