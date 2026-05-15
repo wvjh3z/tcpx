@@ -2564,10 +2564,15 @@ install_warp_ipv6() {
 	esac
 
 	echo -e "${INFO} [1/5] 安装 WireGuard 工具..."
-	apt-get update >/dev/null 2>&1
+	if ! apt-get update 2>&1 | tail -3; then
+		echo -e "${TIP} apt-get update 有警告，继续尝试安装..."
+	fi
 	# wireguard-tools 提供 wg 和 wg-quick
 	# 内核 >= 5.6 自带 wireguard 模块，不需要额外内核模块
-	apt-get install -y wireguard-tools >/dev/null 2>&1
+	if ! apt-get install -y wireguard-tools 2>&1; then
+		echo -e "${TIP} wireguard-tools 安装失败，尝试安装完整 wireguard 包..."
+		apt-get install -y wireguard 2>&1
+	fi
 
 	# 低版本内核需要额外处理
 	local kern_major kern_minor
@@ -2592,6 +2597,11 @@ install_warp_ipv6() {
 
 	if ! command -v wg >/dev/null 2>&1; then
 		echo -e "${ERROR} WireGuard 安装失败！"
+		echo -e "${TIP} 可能原因:"
+		echo -e "  1. APT 源未配置或不可用 (先执行菜单 [5] 或 [6] 换源)"
+		echo -e "  2. 系统未执行过 apt-get update"
+		echo -e "  3. 网络连接异常"
+		echo -e "${TIP} 手动排查: apt-get update && apt-get install -y wireguard-tools"
 		return 1
 	fi
 	echo -e "${INFO} WireGuard 安装完成。"
