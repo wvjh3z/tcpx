@@ -694,9 +694,9 @@ _speedtest_mirrors() {
 	local codename="$3"
 	local timeout=10  # 单个镜像最大测试时间(秒)
 
-	# 测速文件: Contents-amd64.gz (~11MB)，所有镜像都有
-	local test_file="/debian/dists/${codename}/main/Contents-amd64.gz"
-	[[ "$OS_ID" == "ubuntu" || "$OS_ID" == "pop" ]] && test_file="/ubuntu/dists/${codename}/main/Contents-amd64.gz"
+	# 测速文件: Packages.gz (~2-8MB)，所有镜像都有且路径统一
+	local test_file="/debian/dists/${codename}/main/binary-amd64/Packages.gz"
+	[[ "$OS_ID" == "ubuntu" || "$OS_ID" == "pop" ]] && test_file="/ubuntu/dists/${codename}/main/binary-amd64/Packages.gz"
 
 	echo -e "${INFO} 正在测试各镜像源的下载速度，请稍候..."
 	echo -e "${TIP} 每个镜像最多测试 ${timeout} 秒，所有镜像并行测试"
