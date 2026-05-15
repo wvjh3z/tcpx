@@ -708,7 +708,7 @@ _speedtest_mirrors() {
 
 	# 并行启动所有测速任务
 	for i in "${!_urls[@]}"; do
-		local url="http://${_urls[$i]}${test_file}"
+		local url="https://${_urls[$i]}${test_file}"
 		(
 			local result
 			result=$(curl -sL --max-time "$timeout" -o /dev/null -w "%{speed_download} %{size_download}" "$url" 2>/dev/null || echo "0 0")
@@ -945,11 +945,11 @@ optimizing_overseas_network() {
 	local -a mirror_names mirror_urls
 
 	if [[ "$OS_ID" == "debian" ]]; then
-		mirror_names=("Debian官方" "Fastly CDN" "Cloudflare" "MIT" "Kernel.org")
-		mirror_urls=("deb.debian.org" "fastly.cdn.debian.net" "cloudflaremirrors.com" "mirrors.mit.edu" "mirrors.kernel.org")
+		mirror_names=("Debian官方" "Cloudflare" "MIT" "xTom" "DigitalOcean")
+		mirror_urls=("deb.debian.org" "cloudflaremirrors.com" "mirrors.mit.edu" "mirrors.xtom.com" "mirrors.digitalocean.com")
 	elif [[ "$OS_ID" == "ubuntu" || "$OS_ID" == "pop" ]]; then
-		mirror_names=("Ubuntu官方" "Kernel.org" "MIT" "xTom" "DigitalOcean")
-		mirror_urls=("archive.ubuntu.com" "mirrors.kernel.org" "mirrors.mit.edu" "mirrors.xtom.com" "mirrors.digitalocean.com")
+		mirror_names=("Ubuntu官方" "MIT" "xTom" "DigitalOcean")
+		mirror_urls=("archive.ubuntu.com" "mirrors.mit.edu" "mirrors.xtom.com" "mirrors.digitalocean.com")
 	fi
 
 	# 获取当前系统代号用于测速
@@ -1316,11 +1316,11 @@ _upgrade_select_mirror() {
 		mirror_urls=("mirrors.aliyun.com" "mirrors.tencent.com" "repo.huaweicloud.com" "mirrors.ustc.edu.cn" "mirrors.tuna.tsinghua.edu.cn")
 	else
 		if [[ "$OS_ID" == "debian" ]]; then
-			mirror_names=("Debian官方" "Fastly CDN" "Cloudflare" "MIT" "Kernel.org")
-			mirror_urls=("deb.debian.org" "fastly.cdn.debian.net" "cloudflaremirrors.com" "mirrors.mit.edu" "mirrors.kernel.org")
+			mirror_names=("Debian官方" "Cloudflare" "MIT" "xTom" "DigitalOcean")
+			mirror_urls=("deb.debian.org" "cloudflaremirrors.com" "mirrors.mit.edu" "mirrors.xtom.com" "mirrors.digitalocean.com")
 		else
-			mirror_names=("Ubuntu官方" "Kernel.org" "MIT" "xTom" "DigitalOcean")
-			mirror_urls=("archive.ubuntu.com" "mirrors.kernel.org" "mirrors.mit.edu" "mirrors.xtom.com" "mirrors.digitalocean.com")
+			mirror_names=("Ubuntu官方" "MIT" "xTom" "DigitalOcean")
+			mirror_urls=("archive.ubuntu.com" "mirrors.mit.edu" "mirrors.xtom.com" "mirrors.digitalocean.com")
 		fi
 	fi
 
