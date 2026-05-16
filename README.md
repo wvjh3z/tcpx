@@ -6,12 +6,12 @@
 
 一键执行（自动判断网络环境）：
 ```bash
-bash <(curl -fsSL --max-time 5 https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh || curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh)
+curl -fsSL -o /tmp/tcpx.sh https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh || curl -fsSL -o /tmp/tcpx.sh https://gh-proxy.com/https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh; bash /tmp/tcpx.sh
 ```
 
 直接执行某个功能（适合批量远程执行）：
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh | bash -s op0
+curl -fsSL -o /tmp/tcpx.sh https://raw.githubusercontent.com/wvjh3z/tcpx/main/tcpx.sh && bash /tmp/tcpx.sh op0
 ```
 
 ## 菜单
