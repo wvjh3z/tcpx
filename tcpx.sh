@@ -2793,6 +2793,78 @@ EOF
 }
 
 # =================================================
+#  卸载 WARP IPv6
+# =================================================
+uninstall_warp_ipv6() {
+	echo -e "${INFO} ================================================"
+	echo -e "${INFO} 卸载 Cloudflare WARP IPv6"
+	echo -e "${INFO} ================================================"
+	echo -e ""
+
+	# 检查是否安装
+	if ! systemctl list-unit-files 2>/dev/null | grep -q "wg-quick@wgcf" \
+		&& [[ ! -f /etc/wireguard/wgcf.conf ]] \
+		&& [[ ! -d /etc/warp ]] \
+		&& [[ ! -f /usr/local/bin/wgcf ]]; then
+		echo -e "${INFO} 未检测到 WARP IPv6 安装，无需卸载。"
+		return 0
+	fi
+
+	if _is_interactive; then
+		read -p "确认卸载 WARP IPv6？(回车确认, n取消): " confirm
+		[[ "$confirm" =~ ^[nN]$ ]] && { echo -e "${INFO} 已取消。"; return 0; }
+	fi
+
+	echo -e "${INFO} [1/4] 停止并禁用 WireGuard 服务..."
+	systemctl disable --now wg-quick@wgcf 2>/dev/null
+	echo -e "${INFO} 服务已停止。"
+
+	echo -e ""
+	echo -e "${INFO} [2/4] 删除配置文件..."
+	rm -f /etc/wireguard/wgcf.conf
+	rm -rf /etc/warp
+	echo -e "${INFO} 配置文件已删除。"
+
+	echo -e ""
+	echo -e "${INFO} [3/4] 删除 wgcf 二进制..."
+	rm -f /usr/local/bin/wgcf
+	echo -e "${INFO} wgcf 已删除。"
+
+	echo -e ""
+	echo -e "${INFO} [4/4] 恢复 IPv4 优先配置..."
+	if [[ -f /etc/gai.conf ]] && grep -q "^precedence.*::ffff:0:0" /etc/gai.conf 2>/dev/null; then
+		if _is_interactive; then
+			read -p "是否同时移除 IPv4 优先设置？(回车保留, y移除): " remove_gai
+			if [[ "$remove_gai" =~ ^[yY]$ ]]; then
+				sed -i '/^precedence.*::ffff:0:0/d' /etc/gai.conf
+				echo -e "${INFO} IPv4 优先配置已移除。"
+			else
+				echo -e "${INFO} 保留 IPv4 优先配置。"
+			fi
+		else
+			echo -e "${INFO} 保留 IPv4 优先配置 (非交互模式)。"
+		fi
+	fi
+
+	# 清理可能残留的接口
+	ip link delete wgcf 2>/dev/null
+
+	echo -e ""
+	echo -e "${INFO} ================================================"
+	echo -e "${INFO} WARP IPv6 卸载完成！"
+	echo -e "${INFO} ================================================"
+	echo -e ""
+	echo -e "${INFO} 出口 IP 检测:"
+	local default_out ipv6_out
+	default_out=$(curl -s --max-time 5 https://ip.sb 2>/dev/null || echo "获取失败")
+	ipv6_out=$(curl -s6 --max-time 5 https://ip.sb 2>/dev/null || echo "无 IPv6")
+	echo -e "  默认出口: ${GREEN_FONT_PREFIX}${default_out}${FONT_COLOR_SUFFIX}"
+	echo -e "  IPv6 出口: ${GREEN_FONT_PREFIX}${ipv6_out}${FONT_COLOR_SUFFIX}"
+
+	_log "INFO" "WARP IPv6 uninstalled"
+}
+
+# =================================================
 #  系统状态面板
 # =================================================
 
@@ -2848,8 +2920,9 @@ start_menu() {
  ———————————————————————————— 系统 —————————————————————————————
  ${GREEN_FONT_PREFIX}8.${FONT_COLOR_SUFFIX} 安装基础系统包              ${GREEN_FONT_PREFIX}9.${FONT_COLOR_SUFFIX} 系统大版本升级
  ${GREEN_FONT_PREFIX}10.${FONT_COLOR_SUFFIX} 清理日志+定时任务          ${GREEN_FONT_PREFIX}11.${FONT_COLOR_SUFFIX} 安装WARP IPv6
- ${GREEN_FONT_PREFIX}12.${FONT_COLOR_SUFFIX} 添加虚拟内存(Swap)         ${GREEN_FONT_PREFIX}13.${FONT_COLOR_SUFFIX} 设置IPv4优先
- ${GREEN_FONT_PREFIX}14.${FONT_COLOR_SUFFIX} 一键DD系统                 ${GREEN_FONT_PREFIX}0.${FONT_COLOR_SUFFIX} 退出脚本
+ ${GREEN_FONT_PREFIX}12.${FONT_COLOR_SUFFIX} 卸载WARP IPv6              ${GREEN_FONT_PREFIX}13.${FONT_COLOR_SUFFIX} 添加虚拟内存(Swap)
+ ${GREEN_FONT_PREFIX}14.${FONT_COLOR_SUFFIX} 设置IPv4优先               ${GREEN_FONT_PREFIX}15.${FONT_COLOR_SUFFIX} 一键DD系统
+ ${GREEN_FONT_PREFIX}0.${FONT_COLOR_SUFFIX} 退出脚本
 ————————————————————————————————————————————————————————————————"
 	echo ""
 	read -p " 请输入数字: " num
@@ -2866,9 +2939,10 @@ start_menu() {
 	9) upgrade_system_version ;;
 	10) clean_logs_and_schedule ;;
 	11) install_warp_ipv6 ;;
-	12) setup_swap ;;
-	13) set_ipv4_priority ;;
-	14) reinstall_system ;;
+	12) uninstall_warp_ipv6 ;;
+	13) setup_swap ;;
+	14) set_ipv4_priority ;;
+	15) reinstall_system ;;
 	0) exit 0 ;;
 	*)
 		echo -e "${ERROR}: 请输入正确数字"
@@ -2898,6 +2972,7 @@ show_help() {
 	echo "  op9            系统大版本升级"
 	echo "  log            清理日志+定时任务"
 	echo "  warp6          安装 WARP IPv6"
+	echo "  unwarp6        卸载 WARP IPv6"
 	echo "  swap           添加虚拟内存"
 	echo "  ipv4prio       设置 IPv4 优先"
 	echo "  reinstall      一键DD系统"
@@ -2956,6 +3031,10 @@ if [[ $# -gt 0 ]]; then
 		;;
 	warp6)
 		install_warp_ipv6
+		exit 0
+		;;
+	unwarp6)
+		uninstall_warp_ipv6
 		exit 0
 		;;
 	swap)

@@ -26,8 +26,9 @@ curl -fsSL -o /tmp/tcpx.sh https://raw.githubusercontent.com/wvjh3z/tcpx/main/tc
 ———————————————— 系统 ————————————————
  8. 安装基础系统包               9. 系统大版本升级
 10. 清理日志+定时任务           11. 安装WARP IPv6
-12. 添加虚拟内存(Swap)          13. 设置IPv4优先
-14. 一键DD系统                   0. 退出脚本
+12. 卸载WARP IPv6               13. 添加虚拟内存(Swap)
+14. 设置IPv4优先                15. 一键DD系统
+ 0. 退出脚本
 ```
 
 ## 推荐流程
@@ -50,9 +51,10 @@ curl -fsSL -o /tmp/tcpx.sh https://raw.githubusercontent.com/wvjh3z/tcpx/main/tc
 | 9 | `op9` | 系统升级 |
 | 10 | `log` | 清理日志+定时任务 |
 | 11 | `warp6` | 安装 WARP IPv6 |
-| 12 | `swap` | 添加虚拟内存 |
-| 13 | `ipv4prio` | 设置 IPv4 优先 |
-| 14 | `reinstall` | 一键DD系统 |
+| 12 | `unwarp6` | 卸载 WARP IPv6 |
+| 13 | `swap` | 添加虚拟内存 |
+| 14 | `ipv4prio` | 设置 IPv4 优先 |
+| 15 | `reinstall` | 一键DD系统 |
 
 ## 系统支持
 
@@ -86,10 +88,10 @@ curl -fsSL -o /tmp/tcpx.sh https://raw.githubusercontent.com/wvjh3z/tcpx/main/tc
 ### 系统升级 (菜单9)
 自动检测当前版本逐级升级：Debian 11→12→13，Ubuntu 20→22→24
 
-### 设置 IPv4 优先 (菜单13)
+### 设置 IPv4 优先 (菜单14)
 写入 `/etc/gai.conf` 的 precedence 规则，让系统在双栈（IPv4+IPv6）环境下优先使用 IPv4 出站。适用于安装 WARP IPv6 后不希望默认走 IPv6 的场景。
 
-### 一键DD系统 (菜单14)
+### 一键DD系统 (菜单15)
 调用 [bin456789/reinstall](https://github.com/bin456789/reinstall) 脚本重装系统。支持 Debian/Ubuntu/CentOS/AlmaLinux/Rocky/Fedora/Alpine/Windows/DD 镜像。国内自动使用加速镜像下载脚本。高危操作需输入 YES 确认。
 
 ## 致谢 & 第三方引用
@@ -97,7 +99,7 @@ curl -fsSL -o /tmp/tcpx.sh https://raw.githubusercontent.com/wvjh3z/tcpx/main/tc
 | 项目 | 关系 | 许可证 |
 |------|------|--------|
 | [ylx2016/Linux-NetSpeed](https://github.com/ylx2016/Linux-NetSpeed) | 本项目基于其重构（衍生作品） | GPL-2.0 |
-| [bin456789/reinstall](https://github.com/bin456789/reinstall) | 菜单14 运行时调用 | GPL-3.0 |
+| [bin456789/reinstall](https://github.com/bin456789/reinstall) | 菜单15 运行时调用 | GPL-3.0 |
 | [ViRb3/wgcf](https://github.com/ViRb3/wgcf) | 菜单11 运行时下载二进制 | MIT |
 
 > bin456789/reinstall 和 ViRb3/wgcf 仅在运行时通过网络下载并执行，本项目不包含其源代码副本。
