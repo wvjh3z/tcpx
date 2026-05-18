@@ -2715,27 +2715,63 @@ EOF
 	done
 
 	if [[ $handshake_ok -eq 0 ]]; then
-		echo -e "${TIP} 首次握手超时，尝试重新注册密钥..."
+		echo -e "${TIP} 首次握手超时，正在完整重置 WARP 配置..."
+
+		# 完整卸载残留 (停止服务+删除接口+清除配置+重新注册)
 		systemctl stop wg-quick@wgcf 2>/dev/null
+		ip link delete wgcf 2>/dev/null
+		rm -f /etc/wireguard/wgcf.conf
+		rm -rf /etc/warp
+
+		# 重新注册账号
+		mkdir -p /etc/warp
 		cd /etc/warp
-		rm -f wgcf-account.toml wgcf-profile.conf
-		yes | wgcf register 2>/dev/null && wgcf generate 2>/dev/null
-		if [[ -f wgcf-profile.conf ]]; then
-			local new_key
-			new_key=$(grep "^PrivateKey" /etc/warp/wgcf-profile.conf | cut -d= -f2- | tr -d ' ')
-			sed -i "s|^PrivateKey = .*|PrivateKey = ${new_key}|" /etc/wireguard/wgcf.conf
-			local new_addr
-			new_addr=$(grep "^Address" /etc/warp/wgcf-profile.conf | cut -d= -f2- | tr -d ' ' | tr ',' '\n' | grep ':' | head -1)
-			local new_addr_bare
-			new_addr_bare=$(echo "$new_addr" | cut -d/ -f1)
-			sed -i "s|^Address = .*|Address = ${new_addr}|" /etc/wireguard/wgcf.conf
-			sed -i "s|from .* lookup 51888|from ${new_addr_bare} lookup 51888|g" /etc/wireguard/wgcf.conf
+		yes | wgcf register 2>/dev/null
+		wgcf generate 2>/dev/null
+
+		if [[ ! -f wgcf-profile.conf ]]; then
+			echo -e "${ERROR} 重新注册失败！"
+			cd /root
+			return 1
 		fi
+
+		# 重新读取配置并写入 WireGuard
+		local new_priv new_pub new_addr_full new_addr_v6 new_addr_bare
+		new_priv=$(grep "^PrivateKey" /etc/warp/wgcf-profile.conf | cut -d= -f2- | tr -d ' ')
+		new_pub=$(grep "^PublicKey" /etc/warp/wgcf-profile.conf | cut -d= -f2- | tr -d ' ')
+		new_addr_full=$(grep "^Address" /etc/warp/wgcf-profile.conf | cut -d= -f2- | tr -d ' ')
+		new_addr_v6=$(echo "$new_addr_full" | tr ',' '\n' | grep ':' | head -1)
+		new_addr_bare=$(echo "$new_addr_v6" | cut -d/ -f1)
+
+		cat > /etc/wireguard/wgcf.conf <<EOF
+[Interface]
+PrivateKey = ${new_priv}
+Address = ${new_addr_v6}
+MTU = 1280
+Table = off
+
+PostUp = ip -6 route add default dev wgcf table 51888
+PostUp = ip -6 rule add from ${new_addr_bare} lookup 51888
+PostUp = ip -6 rule add fwmark 51888 lookup 51888
+PostDown = ip -6 route delete default dev wgcf table 51888
+PostDown = ip -6 rule delete from ${new_addr_bare} lookup 51888
+PostDown = ip -6 rule delete fwmark 51888 lookup 51888
+
+[Peer]
+PublicKey = ${new_pub}
+AllowedIPs = ::/0
+Endpoint = engage.cloudflareclient.com:2408
+EOF
+
 		systemctl start wg-quick@wgcf 2>/dev/null
-		sleep 5
-		if wg show wgcf 2>/dev/null | grep -q "latest handshake"; then
-			handshake_ok=1
-		fi
+		echo -e "${INFO} 重新启动 WireGuard，等待握手 (最多 15 秒)..."
+		for i in $(seq 1 15); do
+			sleep 1
+			if wg show wgcf 2>/dev/null | grep -q "latest handshake"; then
+				handshake_ok=1
+				break
+			fi
+		done
 	fi
 
 	if [[ $handshake_ok -eq 1 ]]; then
